@@ -40,10 +40,12 @@ impl IoDevice for MockIo {
     }
 }
 
+const HELP_RESPONSE: &str = "Help requested!";
+
 struct HelpCommand {}
 impl<T: IoDevice> Execute<T> for HelpCommand {
     async fn exe(&self, output: &mut Output<'_, T>) {
-        output.write("Help requested!").await;
+        output.write(HELP_RESPONSE).await;
     }
 }
 
@@ -52,6 +54,6 @@ async fn it_works() {
     let mut device = MockIo::new("help\n");
 
     let menu = new_menu(&mut device).add_command(Command::new("help", HelpCommand {}));
-    run_menu(menu).await.unwrap();
-    assert_eq!(device.read(), "Help requested!");
+    run_menu(menu).await;
+    assert_eq!(device.read(), HELP_RESPONSE);
 }

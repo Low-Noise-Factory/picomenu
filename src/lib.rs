@@ -29,13 +29,11 @@ pub trait IoDevice {
 
 pub struct Output<'d, T: IoDevice> {
     io_device: &'d mut T,
-    buffer: [u8; 128],
 }
 
 impl<'d, T: IoDevice> Output<'d, T> {
     pub async fn write(&mut self, s: &str) {
-        self.buffer.clone_from_slice(s.as_bytes());
-        self.io_device.write_packet(&self.buffer).await;
+        self.io_device.write_packet(s.as_bytes()).await;
     }
 }
 
@@ -54,7 +52,7 @@ pub trait Execute<T: IoDevice> {
 pub struct Command<T: IoDevice, CE: Execute<T>> {
     name: &'static str,
     ce: CE,
-    phantom: PhantomData<T>,
+    _marker: PhantomData<T>,
 }
 
 impl<T: IoDevice, CE: Execute<T>> Command<T, CE> {
@@ -73,7 +71,7 @@ impl<T: IoDevice, CE: Execute<T>> Command<T, CE> {
         Self {
             name,
             ce,
-            phantom: PhantomData::default(),
+            _marker: PhantomData,
         }
     }
 }
@@ -164,7 +162,7 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> Menu<'d, T, HeadRouter> {
     }
 
     async fn process_buffer(&mut self) -> Result<(), MenuError> {
-        let cmd = str::from_utf8(&self.input_buffer).unwrap();
+        let cmd = str::from_utf8(&self.input_buffer[..self.input_buffer_idx]).unwrap();
         self.head_router
             .execute_or_forward(cmd, &mut self.output)
             .await?;
@@ -173,26 +171,30 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> Menu<'d, T, HeadRouter> {
     }
 }
 
-pub fn new_menu<'d, T: IoDevice>(io_device: &'d mut T) -> Menu<'d, T, NullRouter> {
+pub fn new_menu<T: IoDevice>(io_device: &mut T) -> Menu<'_, T, NullRouter> {
     Menu {
         head_router: NullRouter {},
         input_buffer: [0; IN_BUF_SIZE],
         input_buffer_idx: 0,
-        output: Output {
-            io_device,
-            buffer: [0; IN_BUF_SIZE],
-        },
+        output: Output { io_device },
     }
 }
 
-pub async fn run_menu<'d, T: IoDevice, H: ExecuteOrForward<T>>(
-    mut menu: Menu<'d, T, H>,
-) -> Result<(), ()> {
+pub async fn run_menu<T: IoDevice, H: ExecuteOrForward<T>>(mut menu: Menu<'_, T, H>) {
     loop {
-        if menu.read_input().await.is_err() {
-            break;
+        match menu.read_input().await {
+            Err(e) => {
+                match e {
+                    MenuError::Io(IoDeviceError::Disconnected) => {
+                        return;
+                    }
+                    MenuError::UnkownCommand => {
+                        // FIXME: print a message instead
+                        panic!("Unkown command");
+                    }
+                }
+            }
+            _ => continue,
         }
     }
-
-    Ok(())
 }
