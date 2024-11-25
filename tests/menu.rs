@@ -58,8 +58,12 @@ impl<T: IoDevice> Command<T> for VersionCommand {
     }
 }
 
-fn build_menu(device: &mut MockIo) -> impl Menu<MockIo> + use<'_> {
-    new_menu(device)
+fn build_menu<'d>(
+    device: &'d mut MockIo,
+    input_buffer: &'d mut [u8],
+    output_buffer: &'d mut [u8],
+) -> impl Menu<MockIo> + use<'d> {
+    new_menu(device, input_buffer, output_buffer)
         .add_command("help", HelpCommand {})
         .add_command("version", VersionCommand { version: 2 })
 }
@@ -67,7 +71,9 @@ fn build_menu(device: &mut MockIo) -> impl Menu<MockIo> + use<'_> {
 #[tokio::test]
 async fn shows_help() {
     let mut device = MockIo::new("help\n");
-    let menu = build_menu(&mut device);
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
     run_menu(menu).await;
     assert_eq!(device.read(), HELP_RESPONSE);
@@ -76,7 +82,9 @@ async fn shows_help() {
 #[tokio::test]
 async fn shows_version() {
     let mut device = MockIo::new("version\n");
-    let menu = build_menu(&mut device);
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
     run_menu(menu).await;
     assert_eq!(device.read(), "Version: 2\n");

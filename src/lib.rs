@@ -8,13 +8,13 @@ use ufmt::uWrite;
 #[derive(Debug)]
 pub enum IoDeviceError {
     Disconnected,
+    InputBufferOverflow,
 }
 
 #[derive(Debug)]
 pub enum MenuError {
     UnkownCommand,
     Io(IoDeviceError),
-    InputBufferOverflow,
 }
 
 impl From<IoDeviceError> for MenuError {
@@ -33,7 +33,7 @@ pub trait IoDevice {
 
 pub struct Output<'d, T: IoDevice> {
     io_device: &'d mut T,
-    buffer: [u8; BUF_SIZE],
+    buffer: &'d mut [u8],
     buffer_idx: usize,
 }
 
@@ -153,9 +153,6 @@ impl<IO: IoDevice, NextRouter: ExecuteOrForward<IO>, CMD: Command<IO>> ExecuteOr
     }
 }
 
-// TODO: make this a parameter
-const BUF_SIZE: usize = 128;
-
 pub trait Menu<IO: IoDevice> {
     fn read_input(&mut self) -> impl Future<Output = Result<(), MenuError>>;
     fn add_command<CMD: Command<IO>>(self, name: &'static str, cmd: CMD) -> impl Menu<IO>;
@@ -163,12 +160,25 @@ pub trait Menu<IO: IoDevice> {
 
 impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, IO, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
-        let mut input_buffer = [0; BUF_SIZE];
-        let n = self.output.io_device.read_packet(&mut input_buffer).await?;
-        let data = &input_buffer[..n];
+        if self.input_buffer_idx >= self.input_buffer.len() {
+            return Err(IoDeviceError::InputBufferOverflow.into());
+        }
 
-        for char in data {
-            self.input_byte(*char).await?;
+        let n = {
+            let buf = &mut self.input_buffer[self.input_buffer_idx..];
+            self.output.io_device.read_packet(buf).await?
+        };
+
+        let start_idx = self.input_buffer_idx;
+        let end_idx = self.input_buffer_idx + n;
+
+        for i in start_idx..end_idx {
+            let char = self.input_buffer[i];
+            self.input_buffer_idx = i;
+
+            if char == b'\n' {
+                self.process_buffer().await?;
+            }
         }
 
         Ok(())
@@ -191,27 +201,12 @@ impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, I
 
 struct MenuImpl<'d, IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> {
     head_router: HeadRouter,
-    input_buffer: [u8; BUF_SIZE],
+    input_buffer: &'d mut [u8],
     input_buffer_idx: usize,
     output: Output<'d, IO>,
 }
 
 impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRouter> {
-    async fn input_byte(&mut self, char: u8) -> Result<(), MenuError> {
-        if self.input_buffer_idx >= self.input_buffer.len() {
-            return Err(MenuError::InputBufferOverflow);
-        }
-
-        if char == b'\n' {
-            self.process_buffer().await?;
-        } else {
-            self.input_buffer[self.input_buffer_idx] = char;
-            self.input_buffer_idx += 1;
-        }
-
-        Ok(())
-    }
-
     async fn process_buffer(&mut self) -> Result<(), MenuError> {
         let cmd = str::from_utf8(&self.input_buffer[..self.input_buffer_idx]).unwrap();
         self.head_router
@@ -222,14 +217,18 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRoute
     }
 }
 
-pub fn new_menu<IO: IoDevice>(io_device: &mut IO) -> impl Menu<IO> + use<'_, IO> {
+pub fn new_menu<'d, IO: IoDevice>(
+    io_device: &'d mut IO,
+    input_buffer: &'d mut [u8],
+    output_buffer: &'d mut [u8],
+) -> impl Menu<IO> + use<'d, IO> {
     MenuImpl {
         head_router: NullRouter {},
-        input_buffer: [0; BUF_SIZE],
+        input_buffer,
         input_buffer_idx: 0,
         output: Output {
             io_device,
-            buffer: [0; BUF_SIZE],
+            buffer: output_buffer,
             buffer_idx: 0,
         },
     }
@@ -247,7 +246,7 @@ pub async fn run_menu<IO: IoDevice>(mut menu: impl Menu<IO>) {
                         // FIXME: print a message instead
                         panic!("Unkown command");
                     }
-                    MenuError::InputBufferOverflow => {
+                    MenuError::Io(IoDeviceError::InputBufferOverflow) => {
                         // FIXME: print a message instead
                         panic!("Input buffer overflow");
                     }
