@@ -4,6 +4,8 @@ use core::future::Future;
 use core::marker::PhantomData;
 use core::str;
 
+use ufmt::uWrite;
+
 pub enum IoDeviceError {
     Disconnected,
 }
@@ -29,12 +31,43 @@ pub trait IoDevice {
 
 pub struct Output<'d, T: IoDevice> {
     io_device: &'d mut T,
+    buffer: [u8; BUF_SIZE],
+    buffer_idx: usize,
 }
 
 impl<'d, T: IoDevice> Output<'d, T> {
     pub async fn write(&mut self, s: &str) {
         self.io_device.write_packet(s.as_bytes()).await;
     }
+
+    pub async fn flush_buffer(&mut self) {
+        self.io_device
+            .write_packet(&self.buffer[..self.buffer_idx])
+            .await;
+    }
+}
+
+impl<'d, T: IoDevice> uWrite for Output<'d, T> {
+    type Error = ();
+
+    fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
+        // FIXME: handle overflow
+
+        let bytes = s.as_bytes();
+        let start_idx = self.buffer_idx;
+        let end_idx = start_idx + bytes.len();
+        self.buffer[start_idx..end_idx].clone_from_slice(bytes);
+        self.buffer_idx = end_idx;
+        Ok(())
+    }
+}
+
+#[macro_export]
+macro_rules! outwriteln {
+    ($out:expr, $($tt:tt)*) => {{
+        ufmt::uwriteln!($out, $($tt)*).unwrap();
+        $out.flush_buffer().await;
+    }}
 }
 
 pub trait ExecuteOrForward<T: IoDevice> {
@@ -110,11 +143,11 @@ impl<T: IoDevice, NextRouter: ExecuteOrForward<T>, CE: Execute<T>> ExecuteOrForw
 }
 
 // TODO: make this a parameter
-const IN_BUF_SIZE: usize = 128;
+const BUF_SIZE: usize = 128;
 
 pub struct Menu<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> {
     head_router: HeadRouter,
-    input_buffer: [u8; IN_BUF_SIZE],
+    input_buffer: [u8; BUF_SIZE],
     input_buffer_idx: usize,
     output: Output<'d, T>,
 }
@@ -137,7 +170,7 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> Menu<'d, T, HeadRouter> {
     }
 
     async fn read_input(&mut self) -> Result<(), MenuError> {
-        let mut input_buffer = [0; IN_BUF_SIZE];
+        let mut input_buffer = [0; BUF_SIZE];
         let n = self.output.io_device.read_packet(&mut input_buffer).await?;
         let data = &input_buffer[..n];
 
@@ -174,9 +207,13 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> Menu<'d, T, HeadRouter> {
 pub fn new_menu<T: IoDevice>(io_device: &mut T) -> Menu<'_, T, NullRouter> {
     Menu {
         head_router: NullRouter {},
-        input_buffer: [0; IN_BUF_SIZE],
+        input_buffer: [0; BUF_SIZE],
         input_buffer_idx: 0,
-        output: Output { io_device },
+        output: Output {
+            io_device,
+            buffer: [0; BUF_SIZE],
+            buffer_idx: 0,
+        },
     }
 }
 
