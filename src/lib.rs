@@ -2,7 +2,7 @@
 
 use core::future::Future;
 use core::marker::PhantomData;
-use core::str;
+use core::str::{self, Utf8Error};
 use ufmt::uWrite;
 
 #[derive(Debug)]
@@ -14,11 +14,18 @@ pub enum IoDeviceError {
 enum MenuError {
     UnkownCommand,
     Io(IoDeviceError),
+    Utf8,
 }
 
 impl From<IoDeviceError> for MenuError {
     fn from(value: IoDeviceError) -> Self {
         MenuError::Io(value)
+    }
+}
+
+impl From<Utf8Error> for MenuError {
+    fn from(_: Utf8Error) -> Self {
+        MenuError::Utf8
     }
 }
 
@@ -186,6 +193,9 @@ impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, I
                 MenuError::Io(IoDeviceError::InputBufferOverflow) => {
                     self.println("Input buffer overflow").await;
                 }
+                MenuError::Utf8 => {
+                    self.println("Input UTF8 error").await;
+                }
             }
         }
 
@@ -229,7 +239,7 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRoute
     }
 
     async fn process_buffer(&mut self) -> Result<(), MenuError> {
-        let cmd_string = str::from_utf8(&self.input_buffer[..self.input_buffer_idx]).unwrap();
+        let cmd_string = str::from_utf8(&self.input_buffer[..self.input_buffer_idx])?;
 
         let mut output = Output {
             io_device: self.io_device,
