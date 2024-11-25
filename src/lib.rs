@@ -11,8 +11,7 @@ pub enum IoDeviceError {
     InputBufferOverflow,
 }
 
-#[derive(Debug)]
-pub enum MenuError {
+enum MenuError {
     UnkownCommand,
     Io(IoDeviceError),
 }
@@ -154,11 +153,56 @@ impl<IO: IoDevice, NextRouter: ExecuteOrForward<IO>, CMD: Command<IO>> ExecuteOr
 }
 
 pub trait Menu<IO: IoDevice> {
-    fn read_input(&mut self) -> impl Future<Output = Result<(), MenuError>>;
     fn add_command<CMD: Command<IO>>(self, name: &'static str, cmd: CMD) -> impl Menu<IO>;
+    fn can_run(&mut self) -> impl Future<Output = bool>;
 }
 
 impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, IO, HeadRouter> {
+    fn add_command<CMD: Command<IO>>(self, name: &'static str, cmd: CMD) -> impl Menu<IO> {
+        let new_router = Router {
+            cmd: CommandHolder::new(name, cmd),
+            next_router: self.head_router,
+        };
+
+        MenuImpl {
+            head_router: new_router,
+            input_buffer: self.input_buffer,
+            input_buffer_idx: self.input_buffer_idx,
+            output_buffer: self.output_buffer,
+            output_buffer_idx: self.output_buffer_idx,
+            io_device: self.io_device,
+        }
+    }
+
+    async fn can_run(&mut self) -> bool {
+        if let Err(e) = self.read_input().await {
+            match e {
+                MenuError::Io(IoDeviceError::Disconnected) => {
+                    return false;
+                }
+                MenuError::UnkownCommand => {
+                    self.println("Unknown command").await;
+                }
+                MenuError::Io(IoDeviceError::InputBufferOverflow) => {
+                    self.println("Input buffer overflow").await;
+                }
+            }
+        }
+
+        true
+    }
+}
+
+struct MenuImpl<'d, IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> {
+    head_router: HeadRouter,
+    input_buffer: &'d mut [u8],
+    input_buffer_idx: usize,
+    output_buffer: &'d mut [u8],
+    output_buffer_idx: usize,
+    io_device: &'d mut IO,
+}
+
+impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
         if self.input_buffer_idx >= self.input_buffer.len() {
             return Err(IoDeviceError::InputBufferOverflow.into());
@@ -184,33 +228,6 @@ impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, I
         Ok(())
     }
 
-    fn add_command<CMD: Command<IO>>(self, name: &'static str, cmd: CMD) -> impl Menu<IO> {
-        let new_router = Router {
-            cmd: CommandHolder::new(name, cmd),
-            next_router: self.head_router,
-        };
-
-        MenuImpl {
-            head_router: new_router,
-            input_buffer: self.input_buffer,
-            input_buffer_idx: self.input_buffer_idx,
-            output_buffer: self.output_buffer,
-            output_buffer_idx: self.output_buffer_idx,
-            io_device: self.io_device,
-        }
-    }
-}
-
-struct MenuImpl<'d, IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> {
-    head_router: HeadRouter,
-    input_buffer: &'d mut [u8],
-    input_buffer_idx: usize,
-    output_buffer: &'d mut [u8],
-    output_buffer_idx: usize,
-    io_device: &'d mut IO,
-}
-
-impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRouter> {
     async fn process_buffer(&mut self) -> Result<(), MenuError> {
         let cmd_string = str::from_utf8(&self.input_buffer[..self.input_buffer_idx]).unwrap();
 
@@ -225,6 +242,16 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRoute
             .await?;
         self.input_buffer_idx = 0;
         Ok(())
+    }
+
+    async fn println(&mut self, msg: &'static str) {
+        let mut output = Output {
+            io_device: self.io_device,
+            buffer: self.output_buffer,
+            buffer_idx: &mut self.output_buffer_idx,
+        };
+
+        outwriteln!(output, "{}", msg).unwrap();
     }
 }
 
@@ -244,24 +271,5 @@ pub fn new_menu<'d, IO: IoDevice>(
 }
 
 pub async fn run_menu<IO: IoDevice>(mut menu: impl Menu<IO>) {
-    loop {
-        match menu.read_input().await {
-            Err(e) => {
-                match e {
-                    MenuError::Io(IoDeviceError::Disconnected) => {
-                        return;
-                    }
-                    MenuError::UnkownCommand => {
-                        // FIXME: print a message instead
-                        panic!("Unkown command");
-                    }
-                    MenuError::Io(IoDeviceError::InputBufferOverflow) => {
-                        // FIXME: print a message instead
-                        panic!("Input buffer overflow");
-                    }
-                }
-            }
-            _ => continue,
-        }
-    }
+    while menu.can_run().await {}
 }
