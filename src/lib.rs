@@ -3,16 +3,18 @@
 use core::future::Future;
 use core::marker::PhantomData;
 use core::str;
-
 use ufmt::uWrite;
 
+#[derive(Debug)]
 pub enum IoDeviceError {
     Disconnected,
 }
 
+#[derive(Debug)]
 pub enum MenuError {
     UnkownCommand,
     Io(IoDeviceError),
+    InputBufferOverflow,
 }
 
 impl From<IoDeviceError> for MenuError {
@@ -47,15 +49,25 @@ impl<IO: IoDevice> Output<'_, IO> {
     }
 }
 
+#[derive(Debug)]
+pub struct OutputBufferOverflow {}
+
 impl<IO: IoDevice> uWrite for Output<'_, IO> {
-    type Error = ();
+    type Error = OutputBufferOverflow;
 
     fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
-        // FIXME: handle overflow
-
         let bytes = s.as_bytes();
+
         let start_idx = self.buffer_idx;
+        if start_idx >= self.buffer.len() {
+            return Err(OutputBufferOverflow {});
+        }
+
         let end_idx = start_idx + bytes.len();
+        if end_idx >= self.buffer.len() {
+            return Err(OutputBufferOverflow {});
+        }
+
         self.buffer[start_idx..end_idx].clone_from_slice(bytes);
         self.buffer_idx = end_idx;
         Ok(())
@@ -65,8 +77,10 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
 #[macro_export]
 macro_rules! outwriteln {
     ($out:expr, $($tt:tt)*) => {{
-        ufmt::uwriteln!($out, $($tt)*).unwrap();
-        $out.flush_buffer().await;
+        match ufmt::uwriteln!($out, $($tt)*) {
+            Ok(_) => { $out.flush_buffer().await; Ok(()) },
+            e => e,
+        }
     }}
 }
 
@@ -184,7 +198,9 @@ struct MenuImpl<'d, IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> {
 
 impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRouter> {
     async fn input_byte(&mut self, char: u8) -> Result<(), MenuError> {
-        // FIXME: handle buffer overflow
+        if self.input_buffer_idx >= self.input_buffer.len() {
+            return Err(MenuError::InputBufferOverflow);
+        }
 
         if char == b'\n' {
             self.process_buffer().await?;
@@ -230,6 +246,10 @@ pub async fn run_menu<IO: IoDevice>(mut menu: impl Menu<IO>) {
                     MenuError::UnkownCommand => {
                         // FIXME: print a message instead
                         panic!("Unkown command");
+                    }
+                    MenuError::InputBufferOverflow => {
+                        // FIXME: print a message instead
+                        panic!("Input buffer overflow");
                     }
                 }
             }

@@ -54,7 +54,7 @@ struct VersionCommand {
 }
 impl<T: IoDevice> Command<T> for VersionCommand {
     async fn execute(&self, output: &mut Output<'_, T>) {
-        outwriteln!(output, "Version: {}", self.version);
+        outwriteln!(output, "Version: {}", self.version).unwrap();
     }
 }
 
@@ -81,3 +81,7 @@ async fn shows_version() {
     run_menu(menu).await;
     assert_eq!(device.read(), "Version: 2\n");
 }
+
+// FIXME: add test for input & output buffer overflows
+
+// FIXME: add test for unkown command
