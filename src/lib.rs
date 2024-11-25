@@ -34,7 +34,7 @@ pub trait IoDevice {
 pub struct Output<'d, T: IoDevice> {
     io_device: &'d mut T,
     buffer: &'d mut [u8],
-    buffer_idx: usize,
+    buffer_idx: &'d mut usize,
 }
 
 impl<IO: IoDevice> Output<'_, IO> {
@@ -44,7 +44,7 @@ impl<IO: IoDevice> Output<'_, IO> {
 
     pub async fn flush_buffer(&mut self) {
         self.io_device
-            .write_packet(&self.buffer[..self.buffer_idx])
+            .write_packet(&self.buffer[..*self.buffer_idx])
             .await;
     }
 }
@@ -58,7 +58,7 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
     fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
         let bytes = s.as_bytes();
 
-        let start_idx = self.buffer_idx;
+        let start_idx = *self.buffer_idx;
         if start_idx >= self.buffer.len() {
             return Err(OutputBufferOverflow {});
         }
@@ -69,7 +69,7 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
         }
 
         self.buffer[start_idx..end_idx].clone_from_slice(bytes);
-        self.buffer_idx = end_idx;
+        *self.buffer_idx = end_idx;
         Ok(())
     }
 }
@@ -166,7 +166,7 @@ impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, I
 
         let n = {
             let buf = &mut self.input_buffer[self.input_buffer_idx..];
-            self.output.io_device.read_packet(buf).await?
+            self.io_device.read_packet(buf).await?
         };
 
         let start_idx = self.input_buffer_idx;
@@ -194,7 +194,9 @@ impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, I
             head_router: new_router,
             input_buffer: self.input_buffer,
             input_buffer_idx: self.input_buffer_idx,
-            output: self.output,
+            output_buffer: self.output_buffer,
+            output_buffer_idx: self.output_buffer_idx,
+            io_device: self.io_device,
         }
     }
 }
@@ -203,14 +205,23 @@ struct MenuImpl<'d, IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> {
     head_router: HeadRouter,
     input_buffer: &'d mut [u8],
     input_buffer_idx: usize,
-    output: Output<'d, IO>,
+    output_buffer: &'d mut [u8],
+    output_buffer_idx: usize,
+    io_device: &'d mut IO,
 }
 
 impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRouter> {
     async fn process_buffer(&mut self) -> Result<(), MenuError> {
-        let cmd = str::from_utf8(&self.input_buffer[..self.input_buffer_idx]).unwrap();
+        let cmd_string = str::from_utf8(&self.input_buffer[..self.input_buffer_idx]).unwrap();
+
+        let mut output = Output {
+            io_device: self.io_device,
+            buffer: self.output_buffer,
+            buffer_idx: &mut self.output_buffer_idx,
+        };
+
         self.head_router
-            .execute_or_forward(cmd, &mut self.output)
+            .execute_or_forward(cmd_string, &mut output)
             .await?;
         self.input_buffer_idx = 0;
         Ok(())
@@ -226,11 +237,9 @@ pub fn new_menu<'d, IO: IoDevice>(
         head_router: NullRouter {},
         input_buffer,
         input_buffer_idx: 0,
-        output: Output {
-            io_device,
-            buffer: output_buffer,
-            buffer_idx: 0,
-        },
+        output_buffer,
+        output_buffer_idx: 0,
+        io_device,
     }
 }
 
