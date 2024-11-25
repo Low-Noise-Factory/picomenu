@@ -90,6 +90,15 @@ async fn shows_version() {
     assert_eq!(device.read(), "Version: 2\n");
 }
 
-// FIXME: add test for input & output buffer overflows
+#[tokio::test]
+async fn handles_unknown_command() {
+    let mut device = MockIo::new("unknown\n");
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
-// FIXME: add test for unkown command
+    run_menu(menu).await;
+    assert_eq!(device.read(), "Unknown command\n");
+}
+
+// FIXME: add test for input & output buffer overflows
