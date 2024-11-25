@@ -43,8 +43,8 @@ impl IoDevice for MockIo {
 const HELP_RESPONSE: &str = "Help requested!\n";
 
 struct HelpCommand {}
-impl<T: IoDevice> Execute<T> for HelpCommand {
-    async fn exe(&self, output: &mut Output<'_, T>) {
+impl<T: IoDevice> Command<T> for HelpCommand {
+    async fn execute(&self, output: &mut Output<'_, T>) {
         output.write(HELP_RESPONSE).await;
     }
 }
@@ -52,19 +52,22 @@ impl<T: IoDevice> Execute<T> for HelpCommand {
 struct VersionCommand {
     version: i32,
 }
-impl<T: IoDevice> Execute<T> for VersionCommand {
-    async fn exe(&self, output: &mut Output<'_, T>) {
+impl<T: IoDevice> Command<T> for VersionCommand {
+    async fn execute(&self, output: &mut Output<'_, T>) {
         outwriteln!(output, "Version: {}", self.version);
     }
+}
+
+fn build_menu(device: &mut MockIo) -> impl Menu<MockIo> + use<'_> {
+    new_menu(device)
+        .add_command("help", HelpCommand {})
+        .add_command("version", VersionCommand { version: 2 })
 }
 
 #[tokio::test]
 async fn shows_help() {
     let mut device = MockIo::new("help\n");
-
-    let menu = new_menu(&mut device)
-        .add_command(Command::new("help", HelpCommand {}))
-        .add_command(Command::new("version", VersionCommand { version: 2 }));
+    let menu = build_menu(&mut device);
 
     run_menu(menu).await;
     assert_eq!(device.read(), HELP_RESPONSE);
@@ -73,10 +76,7 @@ async fn shows_help() {
 #[tokio::test]
 async fn shows_version() {
     let mut device = MockIo::new("version\n");
-
-    let menu = new_menu(&mut device)
-        .add_command(Command::new("help", HelpCommand {}))
-        .add_command(Command::new("version", VersionCommand { version: 2 }));
+    let menu = build_menu(&mut device);
 
     run_menu(menu).await;
     assert_eq!(device.read(), "Version: 2\n");
