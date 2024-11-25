@@ -1,0 +1,14 @@
+[package]
+name = "picomenu"
+version = "0.1.0"
+edition = "2021"
+
+[[test]]
+name = "menu"
+src = "menu.rs"
+
+[dependencies]
+ufmt = "0.2.0"
+
+[dev-dependencies]
+tokio = { version = "1.41.1", features = ["rt", "macros"] }
