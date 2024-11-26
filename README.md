@@ -1,5 +1,7 @@
 # Picomenu
 
+[![Build and Test](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml)
+
 Picomenu is a very simple library to implent command line menus on no-std async embedded systems such as those powered by Embassy. It is only meant for very simple menus and therefore does not support more advanced features at the moment.
 
 Following is an an example of how to use the library:
