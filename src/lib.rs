@@ -37,8 +37,8 @@ pub trait IoDevice {
     ) -> impl Future<Output = Result<usize, IoDeviceError>>;
 }
 
-pub struct Output<'d, T: IoDevice> {
-    io_device: &'d mut T,
+pub struct Output<'d, IO: IoDevice> {
+    io_device: &'d mut IO,
     buffer: &'d mut [u8],
     buffer_idx: &'d mut usize,
 }
@@ -92,25 +92,35 @@ macro_rules! outwriteln {
     }}
 }
 
-trait ExecuteOrForward<IO: IoDevice> {
-    async fn execute_or_forward(&self, cmd: &str, output: &mut Output<IO>)
-        -> Result<(), MenuError>;
+trait ExecuteOrForward<IO: IoDevice, S> {
+    async fn execute_or_forward(
+        &self,
+        cmd: &str,
+        output: &mut Output<IO>,
+        state: &mut S,
+    ) -> Result<(), MenuError>;
 }
 
-pub trait Command<IO: IoDevice> {
-    fn execute(output: &mut Output<'_, IO>) -> impl Future<Output = ()>;
+pub trait Command<IO: IoDevice, S> {
+    fn execute(output: &mut Output<'_, IO>, state: &mut S) -> impl Future<Output = ()>;
 }
 
-struct CommandHolder<IO: IoDevice, CMD: Command<IO>> {
+struct CommandHolder<IO: IoDevice, S, CMD: Command<IO, S>> {
     name: &'static str,
     _cmd_marker: PhantomData<CMD>,
     _io_marker: PhantomData<IO>,
+    _state_marker: PhantomData<S>,
 }
 
-impl<IO: IoDevice, CMD: Command<IO>> CommandHolder<IO, CMD> {
-    async fn try_execute(&self, cmd: &str, output: &mut Output<'_, IO>) -> Result<(), ()> {
+impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
+    async fn try_execute(
+        &self,
+        cmd: &str,
+        output: &mut Output<'_, IO>,
+        state: &mut S,
+    ) -> Result<(), ()> {
         if cmd == self.name {
-            CMD::execute(output).await;
+            CMD::execute(output, state).await;
             Ok(())
         } else {
             Err(())
@@ -118,58 +128,65 @@ impl<IO: IoDevice, CMD: Command<IO>> CommandHolder<IO, CMD> {
     }
 }
 
-impl<IO: IoDevice, CMD: Command<IO>> CommandHolder<IO, CMD> {
+impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
             _cmd_marker: PhantomData,
             _io_marker: PhantomData,
+            _state_marker: PhantomData,
         }
     }
 }
 
 pub struct NullRouter {}
 
-impl<IO: IoDevice> ExecuteOrForward<IO> for NullRouter {
+impl<IO: IoDevice, S> ExecuteOrForward<IO, S> for NullRouter {
     async fn execute_or_forward(
         &self,
         _cmd: &str,
         _output: &mut Output<'_, IO>,
+        _state: &mut S,
     ) -> Result<(), MenuError> {
         Err(MenuError::UnkownCommand)
     }
 }
 
-struct Router<IO: IoDevice, NextRouter: ExecuteOrForward<IO>, CMD: Command<IO>> {
-    cmd: CommandHolder<IO, CMD>,
+struct Router<IO: IoDevice, S, NextRouter: ExecuteOrForward<IO, S>, CMD: Command<IO, S>> {
+    cmd: CommandHolder<IO, S, CMD>,
     next_router: NextRouter,
 }
 
-impl<IO: IoDevice, NextRouter: ExecuteOrForward<IO>, CMD: Command<IO>> ExecuteOrForward<IO>
-    for Router<IO, NextRouter, CMD>
+impl<IO: IoDevice, S, NextRouter: ExecuteOrForward<IO, S>, CMD: Command<IO, S>>
+    ExecuteOrForward<IO, S> for Router<IO, S, NextRouter, CMD>
 {
     async fn execute_or_forward(
         &self,
         cmd: &str,
         output: &mut Output<'_, IO>,
+        state: &mut S,
     ) -> Result<(), MenuError> {
-        if self.cmd.try_execute(cmd, output).await.is_ok() {
+        if self.cmd.try_execute(cmd, output, state).await.is_ok() {
             Ok(())
         } else {
-            self.next_router.execute_or_forward(cmd, output).await
+            self.next_router
+                .execute_or_forward(cmd, output, state)
+                .await
         }
     }
 }
 
-pub trait Menu<IO: IoDevice> {
-    fn add_command<CMD: Command<IO>>(self, name: &'static str) -> impl Menu<IO>;
+pub trait Menu<IO: IoDevice, S> {
+    fn add_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S>;
     fn can_run(&mut self) -> impl Future<Output = bool>;
 }
 
-impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, IO, HeadRouter> {
-    fn add_command<CMD: Command<IO>>(self, name: &'static str) -> impl Menu<IO> {
+impl<IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> Menu<IO, S>
+    for MenuImpl<'_, IO, S, HeadRouter>
+{
+    fn add_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S> {
         let new_router = Router {
-            cmd: CommandHolder::<IO, CMD>::new(name),
+            cmd: CommandHolder::<IO, S, CMD>::new(name),
             next_router: self.head_router,
         };
 
@@ -180,6 +197,7 @@ impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, I
             output_buffer: self.output_buffer,
             output_buffer_idx: self.output_buffer_idx,
             io_device: self.io_device,
+            state: self.state,
         }
     }
 
@@ -205,16 +223,17 @@ impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, I
     }
 }
 
-struct MenuImpl<'d, IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> {
+struct MenuImpl<'d, IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> {
     head_router: HeadRouter,
     input_buffer: &'d mut [u8],
     input_buffer_idx: usize,
     output_buffer: &'d mut [u8],
     output_buffer_idx: usize,
     io_device: &'d mut IO,
+    state: S,
 }
 
-impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRouter> {
+impl<'d, IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> MenuImpl<'d, IO, S, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
         if self.input_buffer_idx >= self.input_buffer.len() {
             return Err(IoDeviceError::InputBufferOverflow.into());
@@ -250,7 +269,7 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRoute
         };
 
         self.head_router
-            .execute_or_forward(cmd_string, &mut output)
+            .execute_or_forward(cmd_string, &mut output, &mut self.state)
             .await?;
         self.input_buffer_idx = 0;
         Ok(())
@@ -267,11 +286,12 @@ impl<'d, T: IoDevice, HeadRouter: ExecuteOrForward<T>> MenuImpl<'d, T, HeadRoute
     }
 }
 
-pub fn new_menu<'d, IO: IoDevice>(
+pub fn new_menu<'d, IO: IoDevice, S>(
     io_device: &'d mut IO,
     input_buffer: &'d mut [u8],
     output_buffer: &'d mut [u8],
-) -> impl Menu<IO> + use<'d, IO> {
+    state: S,
+) -> impl Menu<IO, S> + use<'d, IO, S> {
     MenuImpl {
         head_router: NullRouter {},
         input_buffer,
@@ -279,9 +299,10 @@ pub fn new_menu<'d, IO: IoDevice>(
         output_buffer,
         output_buffer_idx: 0,
         io_device,
+        state,
     }
 }
 
-pub async fn run_menu<IO: IoDevice>(mut menu: impl Menu<IO>) {
+pub async fn run_menu<IO: IoDevice, S>(mut menu: impl Menu<IO, S>) {
     while menu.can_run().await {}
 }

@@ -48,25 +48,31 @@ impl IoDevice for MockIo {
 const HELP_RESPONSE: &str = "Help requested!\n";
 
 struct HelpCommand {}
-impl<T: IoDevice> Command<T> for HelpCommand {
-    async fn execute(output: &mut Output<'_, T>) {
+impl<IO: IoDevice> Command<IO, State> for HelpCommand {
+    async fn execute(output: &mut Output<'_, IO>, _state: &mut State) {
         output.write(HELP_RESPONSE).await;
     }
 }
 
 struct VersionCommand {}
-impl<T: IoDevice> Command<T> for VersionCommand {
-    async fn execute(output: &mut Output<'_, T>) {
-        outwriteln!(output, "Version: {}", 2).unwrap();
+impl<IO: IoDevice> Command<IO, State> for VersionCommand {
+    async fn execute(output: &mut Output<'_, IO>, state: &mut State) {
+        outwriteln!(output, "Version: {}", state.version).unwrap();
     }
+}
+
+struct State {
+    version: u32,
 }
 
 fn build_menu<'d>(
     device: &'d mut MockIo,
     input_buffer: &'d mut [u8],
     output_buffer: &'d mut [u8],
-) -> impl Menu<MockIo> + use<'d> {
-    new_menu(device, input_buffer, output_buffer)
+) -> impl Menu<MockIo, State> + use<'d> {
+    let state = State { version: 2 };
+
+    new_menu(device, input_buffer, output_buffer, state)
         .add_command::<HelpCommand>("help")
         .add_command::<VersionCommand>("version")
 }
