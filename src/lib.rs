@@ -277,7 +277,7 @@ struct MenuImpl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> {
     state: S,
 }
 
-fn parse_cmd_string(cmd_string: &[u8]) -> Result<(&str, Option<&str>), Utf8Error> {
+fn parse_line(cmd_string: &[u8]) -> Result<(&str, Option<&str>), Utf8Error> {
     let mut space_idx = 0;
 
     for (i, char) in cmd_string.iter().enumerate() {
@@ -310,50 +310,53 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
             self.io_device.read_packet(buf).await?
         };
 
-        let start_idx = self.input_buffer_idx;
-        let end_idx = self.input_buffer_idx + n;
-
-        for i in start_idx..end_idx {
-            let char = self.input_buffer[i];
-            self.input_buffer_idx = i;
-
-            if char == b'\n' {
-                self.process_buffer().await?;
-            }
-        }
-
-        Ok(())
+        self.input_buffer_idx += n;
+        self.process_lines_in_buffer().await
     }
 
-    async fn process_buffer(&mut self) -> Result<(), MenuError> {
-        let (cmd, args) = parse_cmd_string(&self.input_buffer[..self.input_buffer_idx])?;
-
-        if cmd == "help" {
-            self.print_help().await?;
-        } else {
-            let mut output = Output {
-                io_device: self.io_device,
-                buffer: self.output_buffer,
-                buffer_idx: &mut self.output_buffer_idx,
-            };
-
-            self.head_router
-                .execute_or_forward(cmd, args, &mut output, &mut self.state)
-                .await?;
-        }
-
-        self.input_buffer_idx = 0;
-        Ok(())
-    }
-
-    async fn print_help(&mut self) -> Result<(), MenuError> {
+    async fn process_lines_in_buffer(&mut self) -> Result<(), MenuError> {
         let mut output = Output {
             io_device: self.io_device,
             buffer: self.output_buffer,
             buffer_idx: &mut self.output_buffer_idx,
         };
 
-        self.head_router.print_help(&mut output).await
+        let last_line_start_idx = {
+            let full_input = &self.input_buffer[..self.input_buffer_idx];
+            let iter = full_input.iter().enumerate().filter(|(_, c)| **c == b'\n');
+
+            let mut line_start_idx = 0;
+            for (line_end_idx, _) in iter {
+                assert!(line_start_idx < full_input.len());
+
+                let line = &full_input[line_start_idx..line_end_idx];
+                let (cmd, args) = parse_line(line)?;
+
+                if cmd == "help" {
+                    self.head_router.print_help(&mut output).await?;
+                } else {
+                    self.head_router
+                        .execute_or_forward(cmd, args, &mut output, &mut self.state)
+                        .await?;
+                }
+
+                line_start_idx = line_end_idx + 1;
+            }
+            line_start_idx
+        };
+
+        // Now we need to copy the remaining buffer data that has not been processed yet to the front
+
+        if last_line_start_idx == 0 {
+            // We can skip this if the buffer already contains the remaining data
+            return Ok(());
+        }
+
+        let (buffer_head, buffer_tail) = self.input_buffer.split_at_mut(last_line_start_idx);
+        let last_line_len = self.input_buffer_idx - last_line_start_idx;
+        buffer_head[..last_line_len].copy_from_slice(&buffer_tail[..last_line_len]);
+        self.input_buffer_idx = last_line_len;
+        Ok(())
     }
 
     async fn println(&mut self, msg: &'static str) {
@@ -396,7 +399,7 @@ mod test {
     #[test]
     fn splits_cmd_string() {
         let test_str = "mycommand random args";
-        let (cmd, args) = parse_cmd_string(test_str.as_bytes()).unwrap();
+        let (cmd, args) = parse_line(test_str.as_bytes()).unwrap();
         assert_eq!(cmd, "mycommand");
         assert_eq!(args, Some("random args"));
     }
@@ -404,7 +407,7 @@ mod test {
     #[test]
     fn splits_cmd_string_without_args() {
         let test_str = "mycommand";
-        let (cmd, args) = parse_cmd_string(test_str.as_bytes()).unwrap();
+        let (cmd, args) = parse_line(test_str.as_bytes()).unwrap();
         assert_eq!(cmd, "mycommand");
         assert_eq!(args, None);
     }

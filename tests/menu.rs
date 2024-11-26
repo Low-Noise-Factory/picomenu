@@ -3,7 +3,7 @@ use std::{collections::VecDeque, string::String};
 
 struct MockIo {
     received: VecDeque<String>,
-    to_send: Vec<String>,
+    to_send: VecDeque<String>,
 }
 
 impl MockIo {
@@ -19,7 +19,7 @@ impl MockIo {
     }
 
     fn queue_to_send(&mut self, msg: &str) {
-        self.to_send.push(msg.to_string());
+        self.to_send.push_back(msg.to_string());
     }
 }
 
@@ -30,7 +30,7 @@ impl IoDevice for MockIo {
     }
 
     async fn read_packet(&mut self, data: &mut [u8]) -> Result<usize, IoDeviceError> {
-        if let Some(to_send) = self.to_send.pop() {
+        if let Some(to_send) = self.to_send.pop_front() {
             let bytes_to_send = to_send.as_bytes();
             let len_to_send = bytes_to_send.len();
 
@@ -47,6 +47,7 @@ impl IoDevice for MockIo {
 }
 
 const TEST_RESPONSE: &str = "Testing 123!\n";
+const VERSION_RESPONSE: &str = "Version: 2\n";
 
 struct TestCommand {}
 impl<IO: IoDevice> Command<IO, State> for TestCommand {
@@ -136,7 +137,7 @@ async fn prints_help() {
 }
 
 #[tokio::test]
-async fn shows_test() {
+async fn supports_simple_command() {
     let mut device = MockIo::new();
     device.queue_to_send("test\n");
 
@@ -149,7 +150,7 @@ async fn shows_test() {
 }
 
 #[tokio::test]
-async fn shows_version() {
+async fn supports_formatting() {
     let mut device = MockIo::new();
     device.queue_to_send("version\n");
 
@@ -158,7 +159,36 @@ async fn shows_version() {
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
     run_menu(menu).await;
-    assert_eq!(device.read(), "Version: 2\n");
+    assert_eq!(device.read(), VERSION_RESPONSE);
+}
+
+#[tokio::test]
+async fn handles_multiple_requests() {
+    let mut device = MockIo::new();
+    device.queue_to_send("test\n");
+    device.queue_to_send("version\n");
+
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    run_menu(menu).await;
+    assert_eq!(device.read(), TEST_RESPONSE);
+    assert_eq!(device.read(), VERSION_RESPONSE);
+}
+
+#[tokio::test]
+async fn supports_inputs_in_pieces() {
+    let mut device = MockIo::new();
+    device.queue_to_send("tes");
+    device.queue_to_send("t\n");
+
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    run_menu(menu).await;
+    assert_eq!(device.read(), TEST_RESPONSE);
 }
 
 #[tokio::test]
@@ -202,7 +232,7 @@ async fn handles_output_buffer_overflow() {
 }
 
 #[tokio::test]
-async fn handles_args() {
+async fn handles_command_arguments() {
     let mut device = MockIo::new();
     device.queue_to_send("hello Testing Person\n");
 
