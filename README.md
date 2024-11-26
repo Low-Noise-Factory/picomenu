@@ -2,7 +2,7 @@
 
 [![Build and Test](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml)
 
-Picomenu is a very simple library to implent command line menus on no-std async embedded systems such as those powered by Embassy. It is only meant for very simple menus and therefore does not support more advanced features at the moment.
+Picomenu is a very simple library to implent command line menus on no-std + async embedded systems such as those powered by [Embassy](https://embassy.dev/). It is only meant for very simple menus and therefore does not support more advanced features at the moment.
 
 Following is an an example of how to use the library:
 
@@ -44,7 +44,6 @@ fn build_menu<'d>(
 ) -> impl Menu<MockIo, State> + use<'d> {
     let state = State {
         version: 2,
-        overflowed: false,
     };
 
     new_menu(device, input_buffer, output_buffer, state)
@@ -54,6 +53,8 @@ fn build_menu<'d>(
 }
 ```
 
-Here is should be noted that the help command is also provided automatically. For more details on how to use the library, please have a look at `tests/menu.rs`.
+Here is should be noted that the help command is also provided automatically!
 
-The current feature set is sufficient for our needs so therefore we likely won't have time to address any feature requests :) But please feel free to contribute any features you may need yourself!
+To get things working in your system, you will also need to implement the `IoDevice` trait for the struct that is resposible for input to and output from the menu. For more details on this and other aspects of how to use the library, please have a look at `tests/menu.rs`.
+
+The current feature set is sufficient for our needs. Therefore, we will unfortunately not have time to address any feature requests :) But please feel free to contribute any features you may need yourself ;)
