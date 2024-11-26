@@ -53,12 +53,20 @@ impl<IO: IoDevice> Command<IO, State> for TestCommand {
     async fn execute(output: &mut Output<'_, IO>, _state: &mut State) {
         output.write(TEST_RESPONSE).await;
     }
+
+    fn help_string() -> &'static str {
+        "Tests stuff"
+    }
 }
 
 struct VersionCommand {}
 impl<IO: IoDevice> Command<IO, State> for VersionCommand {
     async fn execute(output: &mut Output<'_, IO>, state: &mut State) {
         outwriteln!(output, "Version: {}", state.version).unwrap();
+    }
+
+    fn help_string() -> &'static str {
+        "Shows version"
     }
 }
 
@@ -67,6 +75,10 @@ impl<IO: IoDevice> Command<IO, State> for OverflowCommand {
     async fn execute(output: &mut Output<'_, IO>, state: &mut State) {
         let res = outwriteln!(output, "Very long text that will overflow");
         state.overflowed = res.is_err();
+    }
+
+    fn help_string() -> &'static str {
+        "Crashes"
     }
 }
 
@@ -99,7 +111,10 @@ async fn prints_help() {
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
     run_menu(menu).await;
-    assert_eq!(device.read(), "overflow\nversion\ntest\n");
+    assert_eq!(
+        device.read(),
+        "overflow: Crashes\nversion: Shows version\ntest: Tests stuff\n"
+    );
 }
 
 #[tokio::test]

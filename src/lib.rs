@@ -112,6 +112,7 @@ trait Router<IO: IoDevice, S> {
 
 pub trait Command<IO: IoDevice, S> {
     fn execute(output: &mut Output<'_, IO>, state: &mut S) -> impl Future<Output = ()>;
+    fn help_string() -> &'static str;
 }
 
 struct CommandHolder<IO: IoDevice, S, CMD: Command<IO, S>> {
@@ -137,7 +138,7 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
     }
 
     async fn print_help(&self, output: &mut Output<'_, IO>) -> Result<(), OutputBufferOverflow> {
-        outwriteln!(output, "{}", self.name)
+        outwriteln!(output, "{}: {}", self.name, CMD::help_string())
     }
 }
 
