@@ -4,7 +4,7 @@ use std::string::String;
 struct MockIo {
     received: String,
     to_send: String,
-    sent_bytes: usize,
+    packet_sent: bool,
 }
 
 impl MockIo {
@@ -12,7 +12,7 @@ impl MockIo {
         Self {
             received: Default::default(),
             to_send: msg.to_string(),
-            sent_bytes: 0,
+            packet_sent: false,
         }
     }
 
@@ -27,15 +27,20 @@ impl IoDevice for MockIo {
     }
 
     async fn read_packet(&mut self, data: &mut [u8]) -> Result<usize, IoDeviceError> {
-        let bytes = self.to_send.as_bytes();
-        let len = bytes.len();
-
-        if len == self.sent_bytes {
-            Err(IoDeviceError::Disconnected)
+        if self.packet_sent {
+            return Err(IoDeviceError::Disconnected);
         } else {
-            data[..len].clone_from_slice(bytes);
-            self.sent_bytes = len;
-            Ok(len)
+            self.packet_sent = true;
+        }
+
+        let bytes_to_send = self.to_send.as_bytes();
+        let len_to_send = bytes_to_send.len();
+
+        if len_to_send < data.len() {
+            data[..len_to_send].clone_from_slice(bytes_to_send);
+            Ok(len_to_send)
+        } else {
+            Err(IoDeviceError::InputBufferOverflow)
         }
     }
 }
@@ -101,4 +106,15 @@ async fn handles_unknown_command() {
     assert_eq!(device.read(), "Unknown command\n");
 }
 
-// FIXME: add test for input & output buffer overflows
+#[tokio::test]
+async fn handles_input_buffer_overflow() {
+    let mut device = MockIo::new("very long string that will overflow\n");
+    let mut input_buffer = [0; 5];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    run_menu(menu).await;
+    assert_eq!(device.read(), "Input buffer overflow\n");
+}
+
+// FIXME: add test for output buffer overflow

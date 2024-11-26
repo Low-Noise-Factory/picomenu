@@ -52,6 +52,8 @@ impl<IO: IoDevice> Output<'_, IO> {
         self.io_device
             .write_packet(&self.buffer[..*self.buffer_idx])
             .await;
+
+        *self.buffer_idx = 0;
     }
 }
 
