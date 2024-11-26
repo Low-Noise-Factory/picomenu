@@ -61,8 +61,17 @@ impl<IO: IoDevice> Command<IO, State> for VersionCommand {
     }
 }
 
+struct OverflowCommand {}
+impl<IO: IoDevice> Command<IO, State> for OverflowCommand {
+    async fn execute(output: &mut Output<'_, IO>, state: &mut State) {
+        let res = outwriteln!(output, "Very long text that will overflow");
+        state.overflowed = res.is_err();
+    }
+}
+
 struct State {
     version: u32,
+    overflowed: bool,
 }
 
 fn build_menu<'d>(
@@ -70,11 +79,15 @@ fn build_menu<'d>(
     input_buffer: &'d mut [u8],
     output_buffer: &'d mut [u8],
 ) -> impl Menu<MockIo, State> + use<'d> {
-    let state = State { version: 2 };
+    let state = State {
+        version: 2,
+        overflowed: false,
+    };
 
     new_menu(device, input_buffer, output_buffer, state)
         .add_command::<HelpCommand>("help")
         .add_command::<VersionCommand>("version")
+        .add_command::<OverflowCommand>("overflow")
 }
 
 #[tokio::test]
@@ -121,4 +134,14 @@ async fn handles_input_buffer_overflow() {
     assert_eq!(device.read(), "Input buffer overflow\n");
 }
 
-// FIXME: add test for output buffer overflow
+#[tokio::test]
+async fn handles_output_buffer_overflow() {
+    let mut device = MockIo::new("overflow\n");
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 5];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    assert!(!menu.borrow_state().overflowed);
+    let menu = run_menu(menu).await;
+    assert!(menu.borrow_state().overflowed);
+}

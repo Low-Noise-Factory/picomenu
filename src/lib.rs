@@ -179,6 +179,8 @@ impl<IO: IoDevice, S, NextRouter: ExecuteOrForward<IO, S>, CMD: Command<IO, S>>
 pub trait Menu<IO: IoDevice, S> {
     fn add_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S>;
     fn can_run(&mut self) -> impl Future<Output = bool>;
+    fn borrow_state(&self) -> &S;
+    fn borrow_state_mut(&mut self) -> &mut S;
 }
 
 impl<IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> Menu<IO, S>
@@ -220,6 +222,14 @@ impl<IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> Menu<IO, S>
         }
 
         true
+    }
+
+    fn borrow_state(&self) -> &S {
+        &self.state
+    }
+
+    fn borrow_state_mut(&mut self) -> &mut S {
+        &mut self.state
     }
 }
 
@@ -303,6 +313,7 @@ pub fn new_menu<'d, IO: IoDevice, S>(
     }
 }
 
-pub async fn run_menu<IO: IoDevice, S>(mut menu: impl Menu<IO, S>) {
+pub async fn run_menu<IO: IoDevice, S>(mut menu: impl Menu<IO, S>) -> impl Menu<IO, S> {
     while menu.can_run().await {}
+    menu
 }
