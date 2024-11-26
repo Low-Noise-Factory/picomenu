@@ -1,47 +1,47 @@
 use picomenu::*;
-use std::string::String;
+use std::{collections::VecDeque, string::String};
 
 struct MockIo {
-    received: String,
-    to_send: String,
-    packet_sent: bool,
+    received: VecDeque<String>,
+    to_send: Vec<String>,
 }
 
 impl MockIo {
-    fn new(msg: &str) -> Self {
+    fn new() -> Self {
         Self {
             received: Default::default(),
-            to_send: msg.to_string(),
-            packet_sent: false,
+            to_send: Default::default(),
         }
     }
 
-    fn read(&self) -> &str {
-        &self.received
+    fn read(&mut self) -> String {
+        self.received.pop_front().unwrap()
+    }
+
+    fn queue_to_send(&mut self, msg: &str) {
+        self.to_send.push(msg.to_string());
     }
 }
 
 impl IoDevice for MockIo {
     async fn write_packet(&mut self, data: &[u8]) {
         let new_string = String::from_utf8(data.to_vec()).unwrap();
-        self.received += &new_string;
+        self.received.push_back(new_string);
     }
 
     async fn read_packet(&mut self, data: &mut [u8]) -> Result<usize, IoDeviceError> {
-        if self.packet_sent {
-            return Err(IoDeviceError::Disconnected);
-        } else {
-            self.packet_sent = true;
-        }
+        if let Some(to_send) = self.to_send.pop() {
+            let bytes_to_send = to_send.as_bytes();
+            let len_to_send = bytes_to_send.len();
 
-        let bytes_to_send = self.to_send.as_bytes();
-        let len_to_send = bytes_to_send.len();
-
-        if len_to_send < data.len() {
-            data[..len_to_send].clone_from_slice(bytes_to_send);
-            Ok(len_to_send)
+            if len_to_send < data.len() {
+                data[..len_to_send].clone_from_slice(bytes_to_send);
+                Ok(len_to_send)
+            } else {
+                Err(IoDeviceError::InputBufferOverflow)
+            }
         } else {
-            Err(IoDeviceError::InputBufferOverflow)
+            Err(IoDeviceError::Disconnected)
         }
     }
 }
@@ -121,21 +121,25 @@ fn build_menu<'d>(
 
 #[tokio::test]
 async fn prints_help() {
-    let mut device = MockIo::new("help\n");
+    let mut device = MockIo::new();
+    device.queue_to_send("help\n");
+
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
     run_menu(menu).await;
-    assert_eq!(
-        device.read(),
-        "hello: Says hello\noverflow: Crashes\nversion: Shows version\ntest: Tests stuff\n"
-    );
+    assert_eq!(device.read(), "hello: Says hello\n");
+    assert_eq!(device.read(), "overflow: Crashes\n");
+    assert_eq!(device.read(), "version: Shows version\n");
+    assert_eq!(device.read(), "test: Tests stuff\n");
 }
 
 #[tokio::test]
 async fn shows_test() {
-    let mut device = MockIo::new("test\n");
+    let mut device = MockIo::new();
+    device.queue_to_send("test\n");
+
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
@@ -146,7 +150,9 @@ async fn shows_test() {
 
 #[tokio::test]
 async fn shows_version() {
-    let mut device = MockIo::new("version\n");
+    let mut device = MockIo::new();
+    device.queue_to_send("version\n");
+
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
@@ -157,7 +163,9 @@ async fn shows_version() {
 
 #[tokio::test]
 async fn handles_unknown_command() {
-    let mut device = MockIo::new("unknown\n");
+    let mut device = MockIo::new();
+    device.queue_to_send("unknown\n");
+
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
@@ -168,7 +176,9 @@ async fn handles_unknown_command() {
 
 #[tokio::test]
 async fn handles_input_buffer_overflow() {
-    let mut device = MockIo::new("very long string that will overflow\n");
+    let mut device = MockIo::new();
+    device.queue_to_send("very long string that will overflow\n");
+
     let mut input_buffer = [0; 5];
     let mut output_buffer = [0; 128];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
@@ -179,7 +189,9 @@ async fn handles_input_buffer_overflow() {
 
 #[tokio::test]
 async fn handles_output_buffer_overflow() {
-    let mut device = MockIo::new("overflow\n");
+    let mut device = MockIo::new();
+    device.queue_to_send("overflow\n");
+
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 5];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
@@ -191,11 +203,13 @@ async fn handles_output_buffer_overflow() {
 
 #[tokio::test]
 async fn handles_args() {
-    let mut device = MockIo::new("hello Tester\n");
+    let mut device = MockIo::new();
+    device.queue_to_send("hello Testing Person\n");
+
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
     run_menu(menu).await;
-    assert_eq!(device.read(), "Hello Tester!\n");
+    assert_eq!(device.read(), "Hello Testing Person!\n");
 }
