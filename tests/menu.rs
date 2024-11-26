@@ -192,6 +192,36 @@ async fn supports_inputs_in_pieces() {
 }
 
 #[tokio::test]
+async fn supports_two_inputs_in_pieces() {
+    let mut device = MockIo::new();
+    device.queue_to_send("test\nver");
+    device.queue_to_send("sion");
+    device.queue_to_send("\n");
+
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    run_menu(menu).await;
+    assert_eq!(device.read(), TEST_RESPONSE);
+    assert_eq!(device.read(), VERSION_RESPONSE);
+}
+
+#[tokio::test]
+async fn supports_two_inputs_at_once() {
+    let mut device = MockIo::new();
+    device.queue_to_send("version\ntest\n");
+
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    run_menu(menu).await;
+    assert_eq!(device.read(), VERSION_RESPONSE);
+    assert_eq!(device.read(), TEST_RESPONSE);
+}
+
+#[tokio::test]
 async fn handles_unknown_command() {
     let mut device = MockIo::new();
     device.queue_to_send("unknown\n");
