@@ -103,6 +103,7 @@ trait Router<IO: IoDevice, S> {
     async fn execute_or_forward(
         &self,
         cmd: &str,
+        args: Option<&str>,
         output: &mut Output<IO>,
         state: &mut S,
     ) -> Result<(), MenuError>;
@@ -111,7 +112,11 @@ trait Router<IO: IoDevice, S> {
 }
 
 pub trait Command<IO: IoDevice, S> {
-    fn execute(output: &mut Output<'_, IO>, state: &mut S) -> impl Future<Output = ()>;
+    fn execute(
+        args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        state: &mut S,
+    ) -> impl Future<Output = ()>;
     fn help_string() -> &'static str;
 }
 
@@ -126,11 +131,12 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
     async fn try_execute(
         &self,
         cmd: &str,
+        args: Option<&str>,
         output: &mut Output<'_, IO>,
         state: &mut S,
     ) -> Result<(), ()> {
         if cmd == self.name {
-            CMD::execute(output, state).await;
+            CMD::execute(args, output, state).await;
             Ok(())
         } else {
             Err(())
@@ -159,6 +165,7 @@ impl<IO: IoDevice, S> Router<IO, S> for NullRouter {
     async fn execute_or_forward(
         &self,
         _cmd: &str,
+        _args: Option<&str>,
         _output: &mut Output<'_, IO>,
         _state: &mut S,
     ) -> Result<(), MenuError> {
@@ -181,14 +188,15 @@ impl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> Router<IO,
     async fn execute_or_forward(
         &self,
         cmd: &str,
+        args: Option<&str>,
         output: &mut Output<'_, IO>,
         state: &mut S,
     ) -> Result<(), MenuError> {
-        if self.cmd.try_execute(cmd, output, state).await.is_ok() {
+        if self.cmd.try_execute(cmd, args, output, state).await.is_ok() {
             Ok(())
         } else {
             self.next_router
-                .execute_or_forward(cmd, output, state)
+                .execute_or_forward(cmd, args, output, state)
                 .await
         }
     }
@@ -269,6 +277,28 @@ struct MenuImpl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> {
     state: S,
 }
 
+fn parse_cmd_string(cmd_string: &[u8]) -> Result<(&str, Option<&str>), Utf8Error> {
+    let mut space_idx = 0;
+
+    for (i, char) in cmd_string.iter().enumerate() {
+        if *char == b' ' {
+            space_idx = i;
+            break;
+        }
+    }
+
+    let after_space_idx = space_idx + 1;
+
+    if space_idx > 0 && after_space_idx < cmd_string.len() {
+        let cmd = str::from_utf8(&cmd_string[..space_idx])?;
+        let args = str::from_utf8(&cmd_string[after_space_idx..])?;
+        Ok((cmd, Some(args)))
+    } else {
+        let cmd = str::from_utf8(cmd_string)?;
+        Ok((cmd, None))
+    }
+}
+
 impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
         if self.input_buffer_idx >= self.input_buffer.len() {
@@ -296,9 +326,9 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
     }
 
     async fn process_buffer(&mut self) -> Result<(), MenuError> {
-        let cmd_string = str::from_utf8(&self.input_buffer[..self.input_buffer_idx])?;
+        let (cmd, args) = parse_cmd_string(&self.input_buffer[..self.input_buffer_idx])?;
 
-        if cmd_string == "help" {
+        if cmd == "help" {
             self.print_help().await?;
         } else {
             let mut output = Output {
@@ -308,7 +338,7 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
             };
 
             self.head_router
-                .execute_or_forward(cmd_string, &mut output, &mut self.state)
+                .execute_or_forward(cmd, args, &mut output, &mut self.state)
                 .await?;
         }
 
@@ -357,4 +387,25 @@ pub fn new_menu<'d, IO: IoDevice, S>(
 pub async fn run_menu<IO: IoDevice, S>(mut menu: impl Menu<IO, S>) -> impl Menu<IO, S> {
     while menu.can_run().await {}
     menu
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn splits_cmd_string() {
+        let test_str = "mycommand random args";
+        let (cmd, args) = parse_cmd_string(test_str.as_bytes()).unwrap();
+        assert_eq!(cmd, "mycommand");
+        assert_eq!(args, Some("random args"));
+    }
+
+    #[test]
+    fn splits_cmd_string_without_args() {
+        let test_str = "mycommand";
+        let (cmd, args) = parse_cmd_string(test_str.as_bytes()).unwrap();
+        assert_eq!(cmd, "mycommand");
+        assert_eq!(args, None);
+    }
 }

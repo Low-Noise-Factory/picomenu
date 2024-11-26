@@ -50,7 +50,7 @@ const TEST_RESPONSE: &str = "Testing 123!\n";
 
 struct TestCommand {}
 impl<IO: IoDevice> Command<IO, State> for TestCommand {
-    async fn execute(output: &mut Output<'_, IO>, _state: &mut State) {
+    async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, _state: &mut State) {
         output.write(TEST_RESPONSE).await;
     }
 
@@ -61,7 +61,7 @@ impl<IO: IoDevice> Command<IO, State> for TestCommand {
 
 struct VersionCommand {}
 impl<IO: IoDevice> Command<IO, State> for VersionCommand {
-    async fn execute(output: &mut Output<'_, IO>, state: &mut State) {
+    async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, state: &mut State) {
         outwriteln!(output, "Version: {}", state.version).unwrap();
     }
 
@@ -72,13 +72,28 @@ impl<IO: IoDevice> Command<IO, State> for VersionCommand {
 
 struct OverflowCommand {}
 impl<IO: IoDevice> Command<IO, State> for OverflowCommand {
-    async fn execute(output: &mut Output<'_, IO>, state: &mut State) {
+    async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, state: &mut State) {
         let res = outwriteln!(output, "Very long text that will overflow");
         state.overflowed = res.is_err();
     }
 
     fn help_string() -> &'static str {
         "Crashes"
+    }
+}
+
+struct HelloCommand {}
+impl<IO: IoDevice> Command<IO, State> for HelloCommand {
+    async fn execute(args: Option<&str>, output: &mut Output<'_, IO>, _state: &mut State) {
+        if let Some(name) = args {
+            outwriteln!(output, "Hello {}!", name).unwrap();
+        } else {
+            outwriteln!(output, "Please enter your name").unwrap();
+        }
+    }
+
+    fn help_string() -> &'static str {
+        "Says hello"
     }
 }
 
@@ -101,6 +116,7 @@ fn build_menu<'d>(
         .add_command::<TestCommand>("test")
         .add_command::<VersionCommand>("version")
         .add_command::<OverflowCommand>("overflow")
+        .add_command::<HelloCommand>("hello")
 }
 
 #[tokio::test]
@@ -113,7 +129,7 @@ async fn prints_help() {
     run_menu(menu).await;
     assert_eq!(
         device.read(),
-        "overflow: Crashes\nversion: Shows version\ntest: Tests stuff\n"
+        "hello: Says hello\noverflow: Crashes\nversion: Shows version\ntest: Tests stuff\n"
     );
 }
 
@@ -171,4 +187,15 @@ async fn handles_output_buffer_overflow() {
     assert!(!menu.borrow_state().overflowed);
     let menu = run_menu(menu).await;
     assert!(menu.borrow_state().overflowed);
+}
+
+#[tokio::test]
+async fn handles_args() {
+    let mut device = MockIo::new("hello Tester\n");
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    run_menu(menu).await;
+    assert_eq!(device.read(), "Hello Tester!\n");
 }
