@@ -49,17 +49,15 @@ const HELP_RESPONSE: &str = "Help requested!\n";
 
 struct HelpCommand {}
 impl<T: IoDevice> Command<T> for HelpCommand {
-    async fn execute(&self, output: &mut Output<'_, T>) {
+    async fn execute(output: &mut Output<'_, T>) {
         output.write(HELP_RESPONSE).await;
     }
 }
 
-struct VersionCommand {
-    version: i32,
-}
+struct VersionCommand {}
 impl<T: IoDevice> Command<T> for VersionCommand {
-    async fn execute(&self, output: &mut Output<'_, T>) {
-        outwriteln!(output, "Version: {}", self.version).unwrap();
+    async fn execute(output: &mut Output<'_, T>) {
+        outwriteln!(output, "Version: {}", 2).unwrap();
     }
 }
 
@@ -69,8 +67,8 @@ fn build_menu<'d>(
     output_buffer: &'d mut [u8],
 ) -> impl Menu<MockIo> + use<'d> {
     new_menu(device, input_buffer, output_buffer)
-        .add_command("help", HelpCommand {})
-        .add_command("version", VersionCommand { version: 2 })
+        .add_command::<HelpCommand>("help")
+        .add_command::<VersionCommand>("version")
 }
 
 #[tokio::test]

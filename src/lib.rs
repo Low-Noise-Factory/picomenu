@@ -98,19 +98,19 @@ trait ExecuteOrForward<IO: IoDevice> {
 }
 
 pub trait Command<IO: IoDevice> {
-    fn execute(&self, output: &mut Output<'_, IO>) -> impl Future<Output = ()>;
+    fn execute(output: &mut Output<'_, IO>) -> impl Future<Output = ()>;
 }
 
 struct CommandHolder<IO: IoDevice, CMD: Command<IO>> {
     name: &'static str,
-    cmd: CMD,
-    _marker: PhantomData<IO>,
+    _cmd_marker: PhantomData<CMD>,
+    _io_marker: PhantomData<IO>,
 }
 
 impl<IO: IoDevice, CMD: Command<IO>> CommandHolder<IO, CMD> {
     async fn try_execute(&self, cmd: &str, output: &mut Output<'_, IO>) -> Result<(), ()> {
         if cmd == self.name {
-            self.cmd.execute(output).await;
+            CMD::execute(output).await;
             Ok(())
         } else {
             Err(())
@@ -119,11 +119,11 @@ impl<IO: IoDevice, CMD: Command<IO>> CommandHolder<IO, CMD> {
 }
 
 impl<IO: IoDevice, CMD: Command<IO>> CommandHolder<IO, CMD> {
-    pub fn new(name: &'static str, ce: CMD) -> Self {
+    pub fn new(name: &'static str) -> Self {
         Self {
             name,
-            cmd: ce,
-            _marker: PhantomData,
+            _cmd_marker: PhantomData,
+            _io_marker: PhantomData,
         }
     }
 }
@@ -162,14 +162,14 @@ impl<IO: IoDevice, NextRouter: ExecuteOrForward<IO>, CMD: Command<IO>> ExecuteOr
 }
 
 pub trait Menu<IO: IoDevice> {
-    fn add_command<CMD: Command<IO>>(self, name: &'static str, cmd: CMD) -> impl Menu<IO>;
+    fn add_command<CMD: Command<IO>>(self, name: &'static str) -> impl Menu<IO>;
     fn can_run(&mut self) -> impl Future<Output = bool>;
 }
 
 impl<IO: IoDevice, HeadRouter: ExecuteOrForward<IO>> Menu<IO> for MenuImpl<'_, IO, HeadRouter> {
-    fn add_command<CMD: Command<IO>>(self, name: &'static str, cmd: CMD) -> impl Menu<IO> {
+    fn add_command<CMD: Command<IO>>(self, name: &'static str) -> impl Menu<IO> {
         let new_router = Router {
-            cmd: CommandHolder::new(name, cmd),
+            cmd: CommandHolder::<IO, CMD>::new(name),
             next_router: self.head_router,
         };
 
