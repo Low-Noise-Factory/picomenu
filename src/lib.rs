@@ -11,10 +11,14 @@ pub enum IoDeviceError {
     InputBufferOverflow,
 }
 
+#[derive(Debug)]
+pub struct OutputBufferOverflow {}
+
 enum MenuError {
     UnkownCommand,
     Io(IoDeviceError),
     Utf8,
+    OutputOverflow,
 }
 
 impl From<IoDeviceError> for MenuError {
@@ -26,6 +30,12 @@ impl From<IoDeviceError> for MenuError {
 impl From<Utf8Error> for MenuError {
     fn from(_: Utf8Error) -> Self {
         MenuError::Utf8
+    }
+}
+
+impl From<OutputBufferOverflow> for MenuError {
+    fn from(_: OutputBufferOverflow) -> Self {
+        MenuError::OutputOverflow
     }
 }
 
@@ -56,9 +66,6 @@ impl<IO: IoDevice> Output<'_, IO> {
         *self.buffer_idx = 0;
     }
 }
-
-#[derive(Debug)]
-pub struct OutputBufferOverflow {}
 
 impl<IO: IoDevice> uWrite for Output<'_, IO> {
     type Error = OutputBufferOverflow;
@@ -92,13 +99,15 @@ macro_rules! outwriteln {
     }}
 }
 
-trait ExecuteOrForward<IO: IoDevice, S> {
+trait Router<IO: IoDevice, S> {
     async fn execute_or_forward(
         &self,
         cmd: &str,
         output: &mut Output<IO>,
         state: &mut S,
     ) -> Result<(), MenuError>;
+
+    async fn print_help(&self, output: &mut Output<IO>) -> Result<(), MenuError>;
 }
 
 pub trait Command<IO: IoDevice, S> {
@@ -126,6 +135,10 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
             Err(())
         }
     }
+
+    async fn print_help(&self, output: &mut Output<'_, IO>) -> Result<(), OutputBufferOverflow> {
+        outwriteln!(output, "{}", self.name)
+    }
 }
 
 impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
@@ -141,7 +154,7 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
 
 pub struct NullRouter {}
 
-impl<IO: IoDevice, S> ExecuteOrForward<IO, S> for NullRouter {
+impl<IO: IoDevice, S> Router<IO, S> for NullRouter {
     async fn execute_or_forward(
         &self,
         _cmd: &str,
@@ -150,15 +163,19 @@ impl<IO: IoDevice, S> ExecuteOrForward<IO, S> for NullRouter {
     ) -> Result<(), MenuError> {
         Err(MenuError::UnkownCommand)
     }
+
+    async fn print_help(&self, _output: &mut Output<'_, IO>) -> Result<(), MenuError> {
+        Ok(())
+    }
 }
 
-struct Router<IO: IoDevice, S, NextRouter: ExecuteOrForward<IO, S>, CMD: Command<IO, S>> {
+struct RouterImpl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> {
     cmd: CommandHolder<IO, S, CMD>,
     next_router: NextRouter,
 }
 
-impl<IO: IoDevice, S, NextRouter: ExecuteOrForward<IO, S>, CMD: Command<IO, S>>
-    ExecuteOrForward<IO, S> for Router<IO, S, NextRouter, CMD>
+impl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> Router<IO, S>
+    for RouterImpl<IO, S, NextRouter, CMD>
 {
     async fn execute_or_forward(
         &self,
@@ -174,6 +191,11 @@ impl<IO: IoDevice, S, NextRouter: ExecuteOrForward<IO, S>, CMD: Command<IO, S>>
                 .await
         }
     }
+
+    async fn print_help(&self, output: &mut Output<'_, IO>) -> Result<(), MenuError> {
+        self.cmd.print_help(output).await?;
+        self.next_router.print_help(output).await
+    }
 }
 
 pub trait Menu<IO: IoDevice, S> {
@@ -183,11 +205,11 @@ pub trait Menu<IO: IoDevice, S> {
     fn borrow_state_mut(&mut self) -> &mut S;
 }
 
-impl<IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> Menu<IO, S>
-    for MenuImpl<'_, IO, S, HeadRouter>
-{
+impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> Menu<IO, S> for MenuImpl<'_, IO, S, HeadRouter> {
     fn add_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S> {
-        let new_router = Router {
+        assert_ne!(name, "help");
+
+        let new_router = RouterImpl {
             cmd: CommandHolder::<IO, S, CMD>::new(name),
             next_router: self.head_router,
         };
@@ -218,6 +240,9 @@ impl<IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> Menu<IO, S>
                 MenuError::Utf8 => {
                     self.println("Input UTF8 error").await;
                 }
+                MenuError::OutputOverflow => {
+                    self.println("Output buffer overflow").await;
+                }
             }
         }
 
@@ -233,7 +258,7 @@ impl<IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> Menu<IO, S>
     }
 }
 
-struct MenuImpl<'d, IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> {
+struct MenuImpl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> {
     head_router: HeadRouter,
     input_buffer: &'d mut [u8],
     input_buffer_idx: usize,
@@ -243,7 +268,7 @@ struct MenuImpl<'d, IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> {
     state: S,
 }
 
-impl<'d, IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> MenuImpl<'d, IO, S, HeadRouter> {
+impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
         if self.input_buffer_idx >= self.input_buffer.len() {
             return Err(IoDeviceError::InputBufferOverflow.into());
@@ -272,17 +297,32 @@ impl<'d, IO: IoDevice, S, HeadRouter: ExecuteOrForward<IO, S>> MenuImpl<'d, IO, 
     async fn process_buffer(&mut self) -> Result<(), MenuError> {
         let cmd_string = str::from_utf8(&self.input_buffer[..self.input_buffer_idx])?;
 
+        if cmd_string == "help" {
+            self.print_help().await?;
+        } else {
+            let mut output = Output {
+                io_device: self.io_device,
+                buffer: self.output_buffer,
+                buffer_idx: &mut self.output_buffer_idx,
+            };
+
+            self.head_router
+                .execute_or_forward(cmd_string, &mut output, &mut self.state)
+                .await?;
+        }
+
+        self.input_buffer_idx = 0;
+        Ok(())
+    }
+
+    async fn print_help(&mut self) -> Result<(), MenuError> {
         let mut output = Output {
             io_device: self.io_device,
             buffer: self.output_buffer,
             buffer_idx: &mut self.output_buffer_idx,
         };
 
-        self.head_router
-            .execute_or_forward(cmd_string, &mut output, &mut self.state)
-            .await?;
-        self.input_buffer_idx = 0;
-        Ok(())
+        self.head_router.print_help(&mut output).await
     }
 
     async fn println(&mut self, msg: &'static str) {

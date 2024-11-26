@@ -23,7 +23,8 @@ impl MockIo {
 
 impl IoDevice for MockIo {
     async fn write_packet(&mut self, data: &[u8]) {
-        self.received = String::from_utf8(data.to_vec()).unwrap();
+        let new_string = String::from_utf8(data.to_vec()).unwrap();
+        self.received += &new_string;
     }
 
     async fn read_packet(&mut self, data: &mut [u8]) -> Result<usize, IoDeviceError> {
@@ -45,12 +46,12 @@ impl IoDevice for MockIo {
     }
 }
 
-const HELP_RESPONSE: &str = "Help requested!\n";
+const TEST_RESPONSE: &str = "Testing 123!\n";
 
-struct HelpCommand {}
-impl<IO: IoDevice> Command<IO, State> for HelpCommand {
+struct TestCommand {}
+impl<IO: IoDevice> Command<IO, State> for TestCommand {
     async fn execute(output: &mut Output<'_, IO>, _state: &mut State) {
-        output.write(HELP_RESPONSE).await;
+        output.write(TEST_RESPONSE).await;
     }
 }
 
@@ -85,20 +86,31 @@ fn build_menu<'d>(
     };
 
     new_menu(device, input_buffer, output_buffer, state)
-        .add_command::<HelpCommand>("help")
+        .add_command::<TestCommand>("test")
         .add_command::<VersionCommand>("version")
         .add_command::<OverflowCommand>("overflow")
 }
 
 #[tokio::test]
-async fn shows_help() {
+async fn prints_help() {
     let mut device = MockIo::new("help\n");
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
     let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
     run_menu(menu).await;
-    assert_eq!(device.read(), HELP_RESPONSE);
+    assert_eq!(device.read(), "overflow\nversion\ntest\n");
+}
+
+#[tokio::test]
+async fn shows_test() {
+    let mut device = MockIo::new("test\n");
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+
+    run_menu(menu).await;
+    assert_eq!(device.read(), TEST_RESPONSE);
 }
 
 #[tokio::test]
