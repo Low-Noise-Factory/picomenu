@@ -7,22 +7,32 @@ use ufmt::uWrite;
 
 /// These are errors that an `IoDevice` may throw when it is requested to
 /// perform an operation.
-#[derive(Debug)]
+#[derive(Debug, defmt::Format)]
 pub enum IoDeviceError {
     /// This error needs to be thrown when the `IoDevice` has disconnected
     /// and can therefore no longer provide input.
     Disconnected,
-    InputBufferOverflow,
+
+    /// This error indicates that the `IoDevice` has experienced an internal
+    /// buffer overflow condition.
+    BufferOverflow,
 }
 
-/// This error may get thrown when `Output` runs out of buffer space to format an output.
-#[derive(Debug)]
-pub struct OutputBufferOverflow {}
-
-enum MenuError {
+/// Possible errors that the `Menu` might encounter while running.
+#[derive(Debug, defmt::Format)]
+pub enum MenuError {
+    /// A command was received that was not recognised.
     UnkownCommand,
+
+    /// The `IoDevice` experienced an error while reading or writing.
     Io(IoDeviceError),
+
+    /// Bytes could not be interpreted as valid UTF8.
     Utf8,
+
+    /// `Output` ran out of output buffer space while formatting a string.
+    ///
+    /// Increasing the size of the menu's output buffer could prevent this.
     OutputOverflow,
 }
 
@@ -38,17 +48,11 @@ impl From<Utf8Error> for MenuError {
     }
 }
 
-impl From<OutputBufferOverflow> for MenuError {
-    fn from(_: OutputBufferOverflow) -> Self {
-        MenuError::OutputOverflow
-    }
-}
-
 /// A `struct` that implements the `IoDevice` trait allows a menu to interact with the outside world.
 /// This is by providing it with inputs and a way for it to deliver outputs.
 pub trait IoDevice {
     /// Allows the menu to write a packet of `UTF8` data to the IO device.
-    fn write_packet(&mut self, data: &[u8]) -> impl Future<Output = ()>;
+    fn write_packet(&mut self, data: &[u8]) -> impl Future<Output = Result<(), IoDeviceError>>;
 
     /// Allows the menu to read a packet of `UTF8` data from the IO device.
     fn read_packet(
@@ -66,35 +70,36 @@ pub struct Output<'d, IO: IoDevice> {
 
 impl<IO: IoDevice> Output<'_, IO> {
     /// Writes directly to the menu's `IoDevice`.
-    pub async fn write(&mut self, s: &str) {
-        self.io_device.write_packet(s.as_bytes()).await;
+    pub async fn write(&mut self, s: &str) -> Result<(), IoDeviceError> {
+        self.io_device.write_packet(s.as_bytes()).await
     }
 
     /// Flushes the internal buffer to the menu's `IoDevice`.
     /// You should probably not be calling this directly.
-    pub async fn flush_buffer(&mut self) {
+    pub async fn flush_buffer(&mut self) -> Result<(), IoDeviceError> {
         self.io_device
             .write_packet(&self.buffer[..*self.buffer_idx])
-            .await;
+            .await?;
 
         *self.buffer_idx = 0;
+        Ok(())
     }
 }
 
 impl<IO: IoDevice> uWrite for Output<'_, IO> {
-    type Error = OutputBufferOverflow;
+    type Error = MenuError;
 
     fn write_str(&mut self, s: &str) -> Result<(), Self::Error> {
         let bytes = s.as_bytes();
 
         let start_idx = *self.buffer_idx;
         if start_idx >= self.buffer.len() {
-            return Err(OutputBufferOverflow {});
+            return Err(MenuError::OutputOverflow);
         }
 
         let end_idx = start_idx + bytes.len();
         if end_idx >= self.buffer.len() {
-            return Err(OutputBufferOverflow {});
+            return Err(MenuError::OutputOverflow);
         }
 
         self.buffer[start_idx..end_idx].clone_from_slice(bytes);
@@ -108,7 +113,7 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
 macro_rules! outwriteln {
     ($out:expr, $($tt:tt)*) => {{
         match ufmt::uwriteln!($out, $($tt)*) {
-            Ok(_) => { $out.flush_buffer().await; Ok(()) },
+            Ok(_) => $out.flush_buffer().await.map_err(|e| MenuError::Io(e)),
             e => e,
         }
     }}
@@ -164,7 +169,7 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
         }
     }
 
-    async fn print_help(&self, output: &mut Output<'_, IO>) -> Result<(), OutputBufferOverflow> {
+    async fn print_help(&self, output: &mut Output<'_, IO>) -> Result<(), MenuError> {
         outwriteln!(output, "{}: {}", self.name, CMD::help_string())
     }
 }
@@ -278,7 +283,7 @@ impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> Menu<IO, S> for MenuImpl<'_, IO
                 MenuError::UnkownCommand => {
                     self.println("Unknown command").await;
                 }
-                MenuError::Io(IoDeviceError::InputBufferOverflow) => {
+                MenuError::Io(IoDeviceError::BufferOverflow) => {
                     self.println("Input buffer overflow").await;
                 }
                 MenuError::Utf8 => {
@@ -337,7 +342,7 @@ fn parse_line(cmd_string: &[u8]) -> Result<(&str, Option<&str>), Utf8Error> {
 impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
         if self.input_buffer_idx >= self.input_buffer.len() {
-            return Err(IoDeviceError::InputBufferOverflow.into());
+            return Err(IoDeviceError::BufferOverflow.into());
         }
 
         let n = {
@@ -366,6 +371,8 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
 
                 let line = &full_input[line_start_idx..line_end_idx];
                 let (cmd, args) = parse_line(line)?;
+
+                defmt::debug!("Picomenu processing line: {:?}", line);
 
                 if cmd == "help" {
                     self.head_router.print_help(&mut output).await?;

@@ -24,9 +24,10 @@ impl MockIo {
 }
 
 impl IoDevice for MockIo {
-    async fn write_packet(&mut self, data: &[u8]) {
+    async fn write_packet(&mut self, data: &[u8]) -> Result<(), IoDeviceError> {
         let new_string = String::from_utf8(data.to_vec()).unwrap();
         self.received.push_back(new_string);
+        Ok(())
     }
 
     async fn read_packet(&mut self, data: &mut [u8]) -> Result<usize, IoDeviceError> {
@@ -38,7 +39,7 @@ impl IoDevice for MockIo {
                 data[..len_to_send].clone_from_slice(bytes_to_send);
                 Ok(len_to_send)
             } else {
-                Err(IoDeviceError::InputBufferOverflow)
+                Err(IoDeviceError::BufferOverflow)
             }
         } else {
             Err(IoDeviceError::Disconnected)
@@ -52,7 +53,7 @@ const VERSION_RESPONSE: &str = "Version: 2\n";
 struct TestCommand {}
 impl<IO: IoDevice> Command<IO, State> for TestCommand {
     async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, _state: &mut State) {
-        output.write(TEST_RESPONSE).await;
+        output.write(TEST_RESPONSE).await.unwrap();
     }
 
     fn help_string() -> &'static str {
