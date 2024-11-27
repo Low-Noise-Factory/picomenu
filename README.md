@@ -9,8 +9,12 @@ Following is an an example of how to use the library:
 ```
 struct VersionCommand {}
 impl<IO: IoDevice> Command<IO, State> for VersionCommand {
-    async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, state: &mut State) {
-        outwriteln!(output, "Version: {}", state.version).unwrap();
+    async fn execute(
+        _args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        state: &mut State,
+    ) -> Result<(), MenuError> {
+        outwriteln!(output, "Version: {}", state.version)
     }
 
     fn help_string() -> &'static str {
@@ -20,11 +24,15 @@ impl<IO: IoDevice> Command<IO, State> for VersionCommand {
 
 struct HelloCommand {}
 impl<IO: IoDevice> Command<IO, State> for HelloCommand {
-    async fn execute(args: Option<&str>, output: &mut Output<'_, IO>, _state: &mut State) {
+    async fn execute(
+        args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        _state: &mut State,
+    ) -> Result<(), MenuError> {
         if let Some(name) = args {
-            outwriteln!(output, "Hello {}!", name).unwrap();
+            outwriteln!(output, "Hello {}!", name)
         } else {
-            outwriteln!(output, "Please enter your name").unwrap();
+            outwriteln!(output, "Please enter your name")
         }
     }
 
@@ -39,15 +47,11 @@ struct State {
 
 fn build_menu<'d>(
     device: &'d mut MockIo,
+    state: &'d mut State,
     input_buffer: &'d mut [u8],
     output_buffer: &'d mut [u8],
 ) -> impl Menu<MockIo, State> + use<'d> {
-    let state = State {
-        version: 2,
-    };
-
-    make_menu(device, input_buffer, output_buffer, state)
-        .with_command::<TestCommand>("test")
+    make_menu(device, state, input_buffer, output_buffer)
         .with_command::<VersionCommand>("version")
         .with_command::<HelloCommand>("hello")
 }

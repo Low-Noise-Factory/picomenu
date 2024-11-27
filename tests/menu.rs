@@ -52,8 +52,13 @@ const VERSION_RESPONSE: &str = "Version: 0\n";
 
 struct TestCommand {}
 impl<IO: IoDevice> Command<IO, State> for TestCommand {
-    async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, _state: &mut State) {
-        output.write(TEST_RESPONSE).await.unwrap();
+    async fn execute(
+        _args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        _state: &mut State,
+    ) -> Result<(), MenuError> {
+        output.write(TEST_RESPONSE).await?;
+        Ok(())
     }
 
     fn help_string() -> &'static str {
@@ -63,8 +68,12 @@ impl<IO: IoDevice> Command<IO, State> for TestCommand {
 
 struct VersionCommand {}
 impl<IO: IoDevice> Command<IO, State> for VersionCommand {
-    async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, state: &mut State) {
-        outwriteln!(output, "Version: {}", state.version).unwrap();
+    async fn execute(
+        _args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        state: &mut State,
+    ) -> Result<(), MenuError> {
+        outwriteln!(output, "Version: {}", state.version)
     }
 
     fn help_string() -> &'static str {
@@ -74,9 +83,14 @@ impl<IO: IoDevice> Command<IO, State> for VersionCommand {
 
 struct OverflowCommand {}
 impl<IO: IoDevice> Command<IO, State> for OverflowCommand {
-    async fn execute(_args: Option<&str>, output: &mut Output<'_, IO>, state: &mut State) {
+    async fn execute(
+        _args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        state: &mut State,
+    ) -> Result<(), MenuError> {
         let res = outwriteln!(output, "Very long text that will overflow");
-        state.overflowed = res.is_err();
+        state.overflowed = res == Err(MenuError::OutputBufferOverflow);
+        Ok(())
     }
 
     fn help_string() -> &'static str {
@@ -86,11 +100,15 @@ impl<IO: IoDevice> Command<IO, State> for OverflowCommand {
 
 struct HelloCommand {}
 impl<IO: IoDevice> Command<IO, State> for HelloCommand {
-    async fn execute(args: Option<&str>, output: &mut Output<'_, IO>, _state: &mut State) {
+    async fn execute(
+        args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        _state: &mut State,
+    ) -> Result<(), MenuError> {
         if let Some(name) = args {
-            outwriteln!(output, "Hello {}!", name).unwrap();
+            outwriteln!(output, "Hello {}!", name)
         } else {
-            outwriteln!(output, "Please enter your name").unwrap();
+            outwriteln!(output, "Please enter your name")
         }
     }
 

@@ -145,7 +145,7 @@ pub trait Command<IO: IoDevice, S> {
         args: Option<&str>,
         output: &mut Output<'_, IO>,
         state: &mut S,
-    ) -> impl Future<Output = ()>;
+    ) -> impl Future<Output = Result<(), MenuError>>;
 
     /// Returns the help string that will be printed for this command.
     fn help_string() -> &'static str;
@@ -165,12 +165,12 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
         args: Option<&str>,
         output: &mut Output<'_, IO>,
         state: &mut S,
-    ) -> Result<(), ()> {
+    ) -> Result<bool, MenuError> {
         if cmd == self.name {
-            CMD::execute(args, output, state).await;
-            Ok(())
+            CMD::execute(args, output, state).await?;
+            Ok(true)
         } else {
-            Err(())
+            Ok(false)
         }
     }
 
@@ -223,7 +223,7 @@ impl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> Router<IO,
         output: &mut Output<'_, IO>,
         state: &mut S,
     ) -> Result<(), MenuError> {
-        if self.cmd.try_execute(cmd, args, output, state).await.is_ok() {
+        if self.cmd.try_execute(cmd, args, output, state).await? {
             Ok(())
         } else {
             self.next_router
