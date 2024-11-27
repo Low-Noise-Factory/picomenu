@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use core::str::{self, Utf8Error};
 use ufmt::uWrite;
 
-/// These are errors that an `IoDevice` may through when it is requested to
+/// These are errors that an `IoDevice` may throw when it is requested to
 /// perform an operation.
 #[derive(Debug)]
 pub enum IoDeviceError {
@@ -44,13 +44,13 @@ impl From<OutputBufferOverflow> for MenuError {
     }
 }
 
-/// A struct that implements the IoDevice trait allows a menu to interact with the outside world.
+/// A `struct` that implements the `IoDevice` trait allows a menu to interact with the outside world.
 /// This is by providing it with inputs and a way for it to deliver outputs.
 pub trait IoDevice {
-    /// Allows the menu to write a packet of UTF8 data to the IO device.
+    /// Allows the menu to write a packet of `UTF8` data to the IO device.
     fn write_packet(&mut self, data: &[u8]) -> impl Future<Output = ()>;
 
-    /// Allows the menu to read a packet of UTF8 data from the IO device.
+    /// Allows the menu to read a packet of `UTF8` data from the IO device.
     fn read_packet(
         &mut self,
         data: &mut [u8],
@@ -103,7 +103,7 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
     }
 }
 
-/// This macro allows you to write formatted text using an `Output` handle.
+/// Macro allows you to write formatted text using an `Output` handle.
 #[macro_export]
 macro_rules! outwriteln {
     ($out:expr, $($tt:tt)*) => {{
@@ -405,7 +405,7 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
     }
 }
 
-/// Returns an empty `Menu` that can be extended/customised using the relevant trait functions.
+/// Returns an empty `Menu` that can be extended/customized using the relevant trait functions.
 pub fn make_menu<'d, IO: IoDevice, S>(
     io_device: &'d mut IO,
     input_buffer: &'d mut [u8],
