@@ -7,7 +7,7 @@ use ufmt::uWrite;
 
 /// These are errors that an `IoDevice` may throw when it is requested to
 /// perform an operation.
-#[derive(Debug, defmt::Format)]
+#[derive(Debug, defmt::Format, PartialEq)]
 pub enum IoDeviceError {
     /// This error needs to be thrown when the `IoDevice` has disconnected
     /// and can therefore no longer provide input.
@@ -19,10 +19,10 @@ pub enum IoDeviceError {
 }
 
 /// Possible errors that the `Menu` might encounter while running.
-#[derive(Debug, defmt::Format)]
+#[derive(Debug, defmt::Format, PartialEq)]
 pub enum MenuError {
     /// A command was received that was not recognised.
-    UnkownCommand,
+    UnknownCommand,
 
     /// The `IoDevice` experienced an error while reading or writing.
     Io(IoDeviceError),
@@ -195,7 +195,7 @@ impl<IO: IoDevice, S> Router<IO, S> for FinalRouter {
         _output: &mut Output<'_, IO>,
         _state: &mut S,
     ) -> Result<(), MenuError> {
-        Err(MenuError::UnkownCommand)
+        Err(MenuError::UnknownCommand)
     }
 
     async fn print_help(&self, _output: &mut Output<'_, IO>) -> Result<(), MenuError> {
@@ -243,15 +243,8 @@ pub trait Menu<IO: IoDevice, S> {
     /// Registers a new command with the Menu.
     fn with_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S>;
 
-    /// Tries to run the Menu and returns false once that is no longer possible.
-    /// Most likely due to a disconnect.
-    fn can_run(&mut self) -> impl Future<Output = bool>;
-
-    /// Borrows the internal Menu state.
-    fn borrow_state(&self) -> &S;
-
-    /// Borrows the internal Menu state mutably.
-    fn borrow_state_mut(&mut self) -> &mut S;
+    /// Runs the Menu until it encounters an unrecoverable error or its `IODevice` disconnects.
+    fn run(self) -> impl Future<Output = Result<(), MenuError>>;
 }
 
 impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> Menu<IO, S> for MenuImpl<'_, IO, S, HeadRouter> {
@@ -274,36 +267,14 @@ impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> Menu<IO, S> for MenuImpl<'_, IO
         }
     }
 
-    async fn can_run(&mut self) -> bool {
-        if let Err(e) = self.read_input().await {
-            match e {
-                MenuError::Io(IoDeviceError::Disconnected) => {
-                    return false;
-                }
-                MenuError::UnkownCommand => {
-                    self.println("Unknown command").await;
-                }
-                MenuError::Io(IoDeviceError::BufferOverflow) => {
-                    self.println("Input buffer overflow").await;
-                }
-                MenuError::Utf8 => {
-                    self.println("Input UTF8 error").await;
-                }
-                MenuError::OutputOverflow => {
-                    self.println("Output buffer overflow").await;
-                }
+    async fn run(mut self) -> Result<(), MenuError> {
+        loop {
+            match self.read_input().await {
+                Ok(_) => {}
+                Err(MenuError::Io(IoDeviceError::Disconnected)) => return Ok(()),
+                other => return other,
             }
         }
-
-        true
-    }
-
-    fn borrow_state(&self) -> &S {
-        &self.state
-    }
-
-    fn borrow_state_mut(&mut self) -> &mut S {
-        &mut self.state
     }
 }
 
@@ -314,7 +285,7 @@ struct MenuImpl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> {
     output_buffer: &'d mut [u8],
     output_buffer_idx: usize,
     io_device: &'d mut IO,
-    state: S,
+    state: &'d mut S,
 }
 
 fn parse_line(cmd_string: &[u8]) -> Result<(&str, Option<&str>), Utf8Error> {
@@ -339,23 +310,56 @@ fn parse_line(cmd_string: &[u8]) -> Result<(&str, Option<&str>), Utf8Error> {
     }
 }
 
+async fn try_print_error<IO: IoDevice>(
+    output: &mut Output<'_, IO>,
+    e: MenuError,
+) -> Result<(), MenuError> {
+    match e {
+        MenuError::Io(IoDeviceError::Disconnected) => Err(e),
+        MenuError::OutputOverflow => Err(e),
+        MenuError::UnknownCommand => {
+            outwriteln!(output, "Unknown command")
+        }
+        MenuError::Io(IoDeviceError::BufferOverflow) => {
+            outwriteln!(output, "IO buffer overflow")
+        }
+        MenuError::Utf8 => {
+            outwriteln!(output, "Input UTF8 error")
+        }
+    }
+}
+
 impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
-        if self.input_buffer_idx >= self.input_buffer.len() {
-            return Err(IoDeviceError::BufferOverflow.into());
-        }
-
-        let n = {
-            let buf = &mut self.input_buffer[self.input_buffer_idx..];
-            self.io_device.read_packet(buf).await?
+        let read_result = {
+            if self.input_buffer_idx < self.input_buffer.len() {
+                let buf = &mut self.input_buffer[self.input_buffer_idx..];
+                self.io_device.read_packet(buf).await
+            } else {
+                Err(IoDeviceError::BufferOverflow)
+            }
         };
 
-        self.input_buffer_idx += n;
-        self.process_lines_in_buffer().await
+        match read_result {
+            Ok(n_bytes_read) => {
+                self.input_buffer_idx += n_bytes_read;
+                self.process_lines_in_buffer().await
+            }
+            Err(e) => {
+                let output = &mut Output {
+                    io_device: self.io_device,
+                    buffer: self.output_buffer,
+                    buffer_idx: &mut self.output_buffer_idx,
+                };
+
+                // Try to print an error message before giving up
+                try_print_error(output, MenuError::Io(e)).await
+            }
+        }
     }
 
     async fn process_lines_in_buffer(&mut self) -> Result<(), MenuError> {
-        let mut output = Output {
+        let output = &mut Output {
             io_device: self.io_device,
             buffer: self.output_buffer,
             buffer_idx: &mut self.output_buffer_idx,
@@ -375,11 +379,17 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
                 defmt::debug!("Picomenu processing line: {:?}", line);
 
                 if cmd == "help" {
-                    self.head_router.print_help(&mut output).await?;
+                    self.head_router.print_help(output).await?;
                 } else {
-                    self.head_router
-                        .execute_or_forward(cmd, args, &mut output, &mut self.state)
-                        .await?;
+                    let res = self
+                        .head_router
+                        .execute_or_forward(cmd, args, output, self.state)
+                        .await;
+
+                    if let Err(e) = res {
+                        // Try to print an error message before giving up
+                        try_print_error(output, e).await?
+                    }
                 }
 
                 line_start_idx = line_end_idx + 1;
@@ -400,24 +410,14 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
         self.input_buffer_idx = last_line_len;
         Ok(())
     }
-
-    async fn println(&mut self, msg: &'static str) {
-        let mut output = Output {
-            io_device: self.io_device,
-            buffer: self.output_buffer,
-            buffer_idx: &mut self.output_buffer_idx,
-        };
-
-        outwriteln!(output, "{}", msg).unwrap();
-    }
 }
 
 /// Returns an empty `Menu` that can be extended/customized using the relevant trait functions.
 pub fn make_menu<'d, IO: IoDevice, S>(
     io_device: &'d mut IO,
+    state: &'d mut S,
     input_buffer: &'d mut [u8],
     output_buffer: &'d mut [u8],
-    state: S,
 ) -> impl Menu<IO, S> + use<'d, IO, S> {
     MenuImpl {
         head_router: FinalRouter {},
@@ -428,14 +428,6 @@ pub fn make_menu<'d, IO: IoDevice, S>(
         io_device,
         state,
     }
-}
-
-/// Runs the specified `Menu` until it is no longer possible (most likely due to a disconnect).
-///
-/// The `Menu` is then returned back so that it can be re-used or to access its state.
-pub async fn run_menu<IO: IoDevice, S>(mut menu: impl Menu<IO, S>) -> impl Menu<IO, S> {
-    while menu.can_run().await {}
-    menu
 }
 
 #[cfg(test)]

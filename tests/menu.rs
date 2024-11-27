@@ -48,7 +48,7 @@ impl IoDevice for MockIo {
 }
 
 const TEST_RESPONSE: &str = "Testing 123!\n";
-const VERSION_RESPONSE: &str = "Version: 2\n";
+const VERSION_RESPONSE: &str = "Version: 0\n";
 
 struct TestCommand {}
 impl<IO: IoDevice> Command<IO, State> for TestCommand {
@@ -99,6 +99,7 @@ impl<IO: IoDevice> Command<IO, State> for HelloCommand {
     }
 }
 
+#[derive(Default)]
 struct State {
     version: u32,
     overflowed: bool,
@@ -106,15 +107,11 @@ struct State {
 
 fn build_menu<'d>(
     device: &'d mut MockIo,
+    state: &'d mut State,
     input_buffer: &'d mut [u8],
     output_buffer: &'d mut [u8],
 ) -> impl Menu<MockIo, State> + use<'d> {
-    let state = State {
-        version: 2,
-        overflowed: false,
-    };
-
-    make_menu(device, input_buffer, output_buffer, state)
+    make_menu(device, state, input_buffer, output_buffer)
         .with_command::<TestCommand>("test")
         .with_command::<VersionCommand>("version")
         .with_command::<OverflowCommand>("overflow")
@@ -128,9 +125,16 @@ async fn prints_help() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
 
-    run_menu(menu).await;
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
+
     assert_eq!(device.read(), "hello: Says hello\n");
     assert_eq!(device.read(), "overflow: Crashes\n");
     assert_eq!(device.read(), "version: Shows version\n");
@@ -144,9 +148,15 @@ async fn supports_simple_command() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
     assert_eq!(device.read(), TEST_RESPONSE);
 }
 
@@ -157,9 +167,15 @@ async fn supports_formatting() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
     assert_eq!(device.read(), VERSION_RESPONSE);
 }
 
@@ -171,11 +187,39 @@ async fn handles_multiple_requests() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
 
-    run_menu(menu).await;
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
+
     assert_eq!(device.read(), TEST_RESPONSE);
     assert_eq!(device.read(), VERSION_RESPONSE);
+}
+
+#[tokio::test]
+async fn handles_requests_after_error() {
+    let mut device = MockIo::new();
+    device.queue_to_send("unkown\n");
+    device.queue_to_send("test\n");
+
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
+
+    assert_eq!(device.read(), "Unknown command\n");
+    assert_eq!(device.read(), TEST_RESPONSE);
 }
 
 #[tokio::test]
@@ -186,9 +230,15 @@ async fn supports_inputs_in_pieces() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
     assert_eq!(device.read(), TEST_RESPONSE);
 }
 
@@ -201,9 +251,15 @@ async fn supports_two_inputs_in_pieces() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
     assert_eq!(device.read(), TEST_RESPONSE);
     assert_eq!(device.read(), VERSION_RESPONSE);
 }
@@ -215,9 +271,15 @@ async fn supports_two_inputs_at_once() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
     assert_eq!(device.read(), VERSION_RESPONSE);
     assert_eq!(device.read(), TEST_RESPONSE);
 }
@@ -229,9 +291,15 @@ async fn handles_unknown_command() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
     assert_eq!(device.read(), "Unknown command\n");
 }
 
@@ -242,10 +310,16 @@ async fn handles_input_buffer_overflow() {
 
     let mut input_buffer = [0; 5];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
-    assert_eq!(device.read(), "Input buffer overflow\n");
+    assert_eq!(device.read(), "IO buffer overflow\n");
 }
 
 #[tokio::test]
@@ -255,11 +329,18 @@ async fn handles_output_buffer_overflow() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 5];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    assert!(!state.overflowed);
 
-    assert!(!menu.borrow_state().overflowed);
-    let menu = run_menu(menu).await;
-    assert!(menu.borrow_state().overflowed);
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+
+    menu.run().await.unwrap();
+    assert!(state.overflowed);
 }
 
 #[tokio::test]
@@ -269,8 +350,14 @@ async fn handles_command_arguments() {
 
     let mut input_buffer = [0; 128];
     let mut output_buffer = [0; 128];
-    let menu = build_menu(&mut device, &mut input_buffer, &mut output_buffer);
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
 
-    run_menu(menu).await;
     assert_eq!(device.read(), "Hello Testing Person!\n");
 }
