@@ -175,7 +175,7 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
     }
 
     async fn print_help(&self, output: &mut Output<'_, IO>) -> Result<(), MenuError> {
-        outwriteln!(output, "\t{}: {}", self.name, CMD::help_string())
+        outwriteln!(output, "> {}: {}", self.name, CMD::help_string())
     }
 }
 
@@ -254,7 +254,9 @@ pub trait Menu<IO: IoDevice, S> {
 
 impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> Menu<IO, S> for MenuImpl<'_, IO, S, HeadRouter> {
     fn with_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S> {
+        // TODO: return errors for invalid commands instead of pannicing
         assert_ne!(name, "help");
+        assert!(name.find([' ']).is_none());
 
         let new_router = NormalRouter {
             cmd: CommandHolder::<IO, S, CMD>::new(name),
@@ -396,7 +398,7 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
                 defmt::trace!("Picomenu processing line: {:?}", line);
 
                 if cmd == "help" {
-                    outwriteln!(output, "AVAILABLE COMMANDS:")?;
+                    outwriteln!(output, "AVAILABLE COMMANDS:\n")?;
                     self.head_router.print_help(output).await?;
                 } else {
                     let res = self
