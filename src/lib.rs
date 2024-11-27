@@ -33,7 +33,12 @@ pub enum MenuError {
     /// `Output` ran out of output buffer space while formatting a string.
     ///
     /// Increasing the size of the menu's output buffer could prevent this.
-    OutputOverflow,
+    OutputBufferOverflow,
+
+    /// `Menu` ran out of input buffer space while reading from its `IoDevice`.
+    ///
+    /// Increasing the size of the menu's input buffer could prevent this.
+    InputBufferOverflow,
 }
 
 impl From<IoDeviceError> for MenuError {
@@ -94,12 +99,12 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
 
         let start_idx = *self.buffer_idx;
         if start_idx >= self.buffer.len() {
-            return Err(MenuError::OutputOverflow);
+            return Err(MenuError::OutputBufferOverflow);
         }
 
         let end_idx = start_idx + bytes.len();
         if end_idx >= self.buffer.len() {
-            return Err(MenuError::OutputOverflow);
+            return Err(MenuError::OutputBufferOverflow);
         }
 
         self.buffer[start_idx..end_idx].clone_from_slice(bytes);
@@ -316,7 +321,6 @@ async fn try_print_error<IO: IoDevice>(
 ) -> Result<(), MenuError> {
     match e {
         MenuError::Io(IoDeviceError::Disconnected) => Err(e),
-        MenuError::OutputOverflow => Err(e),
         MenuError::UnknownCommand => {
             outwriteln!(output, "Unknown command")
         }
@@ -326,6 +330,13 @@ async fn try_print_error<IO: IoDevice>(
         MenuError::Utf8 => {
             outwriteln!(output, "Input UTF8 error")
         }
+        MenuError::InputBufferOverflow => {
+            outwriteln!(output, "Input buffer overflowed & dumped")
+        }
+
+        // We need to abort when then output buffer is full since that
+        // condition prevents us from outputting an error message.
+        MenuError::OutputBufferOverflow => Err(e),
     }
 }
 
@@ -334,9 +345,12 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
         let read_result = {
             if self.input_buffer_idx < self.input_buffer.len() {
                 let buf = &mut self.input_buffer[self.input_buffer_idx..];
-                self.io_device.read_packet(buf).await
+                self.io_device.read_packet(buf).await.map_err(|e| match e {
+                    IoDeviceError::BufferOverflow => MenuError::InputBufferOverflow,
+                    other => MenuError::Io(other),
+                })
             } else {
-                Err(IoDeviceError::BufferOverflow)
+                Err(MenuError::InputBufferOverflow)
             }
         };
 
@@ -346,6 +360,9 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
                 self.process_lines_in_buffer().await
             }
             Err(e) => {
+                self.input_buffer_idx = 0;
+                defmt::debug!("Input buffer dumped due to read error");
+
                 let output = &mut Output {
                     io_device: self.io_device,
                     buffer: self.output_buffer,
@@ -353,7 +370,7 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
                 };
 
                 // Try to print an error message before giving up
-                try_print_error(output, MenuError::Io(e)).await
+                try_print_error(output, e).await
             }
         }
     }
@@ -376,7 +393,7 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
                 let line = &full_input[line_start_idx..line_end_idx];
                 let (cmd, args) = parse_line(line)?;
 
-                defmt::debug!("Picomenu processing line: {:?}", line);
+                defmt::trace!("Picomenu processing line: {:?}", line);
 
                 if cmd == "help" {
                     self.head_router.print_help(output).await?;

@@ -319,7 +319,7 @@ async fn handles_input_buffer_overflow() {
     );
     menu.run().await.unwrap();
 
-    assert_eq!(device.read(), "IO buffer overflow\n");
+    assert_eq!(device.read(), "Input buffer overflowed & dumped\n");
 }
 
 #[tokio::test]
