@@ -113,11 +113,11 @@ fn build_menu<'d>(
         overflowed: false,
     };
 
-    new_menu(device, input_buffer, output_buffer, state)
-        .add_command::<TestCommand>("test")
-        .add_command::<VersionCommand>("version")
-        .add_command::<OverflowCommand>("overflow")
-        .add_command::<HelloCommand>("hello")
+    make_menu(device, input_buffer, output_buffer, state)
+        .with_command::<TestCommand>("test")
+        .with_command::<VersionCommand>("version")
+        .with_command::<OverflowCommand>("overflow")
+        .with_command::<HelloCommand>("hello")
 }
 
 #[tokio::test]

@@ -5,12 +5,17 @@ use core::marker::PhantomData;
 use core::str::{self, Utf8Error};
 use ufmt::uWrite;
 
+/// These are errors that an `IoDevice` may through when it is requested to
+/// perform an operation.
 #[derive(Debug)]
 pub enum IoDeviceError {
+    /// This error needs to be thrown when the `IoDevice` has disconnected
+    /// and can therefore no longer provide input.
     Disconnected,
     InputBufferOverflow,
 }
 
+/// This error may get thrown when `Output` runs out of buffer space to format an output.
 #[derive(Debug)]
 pub struct OutputBufferOverflow {}
 
@@ -39,14 +44,20 @@ impl From<OutputBufferOverflow> for MenuError {
     }
 }
 
+/// A struct that implements the IoDevice trait allows a menu to interact with the outside world.
+/// This is by providing it with inputs and a way for it to deliver outputs.
 pub trait IoDevice {
+    /// Allows the menu to write a packet of UTF8 data to the IO device.
     fn write_packet(&mut self, data: &[u8]) -> impl Future<Output = ()>;
+
+    /// Allows the menu to read a packet of UTF8 data from the IO device.
     fn read_packet(
         &mut self,
         data: &mut [u8],
     ) -> impl Future<Output = Result<usize, IoDeviceError>>;
 }
 
+/// An Output handle is provided to `Command` callbacks to enable them to write outputs.
 pub struct Output<'d, IO: IoDevice> {
     io_device: &'d mut IO,
     buffer: &'d mut [u8],
@@ -54,10 +65,13 @@ pub struct Output<'d, IO: IoDevice> {
 }
 
 impl<IO: IoDevice> Output<'_, IO> {
+    /// Writes directly to the menu's `IoDevice`.
     pub async fn write(&mut self, s: &str) {
         self.io_device.write_packet(s.as_bytes()).await;
     }
 
+    /// Flushes the internal buffer to the menu's `IoDevice`.
+    /// You should probably not be calling this directly.
     pub async fn flush_buffer(&mut self) {
         self.io_device
             .write_packet(&self.buffer[..*self.buffer_idx])
@@ -89,6 +103,7 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
     }
 }
 
+/// This macro allows you to write formatted text using an `Output` handle.
 #[macro_export]
 macro_rules! outwriteln {
     ($out:expr, $($tt:tt)*) => {{
@@ -111,12 +126,18 @@ trait Router<IO: IoDevice, S> {
     async fn print_help(&self, output: &mut Output<IO>) -> Result<(), MenuError>;
 }
 
+/// Commands for a menu are specified by providing structs that implement the Command trait.
+/// This allows the menu to understand how to implement the command.
 pub trait Command<IO: IoDevice, S> {
+    /// Executes the logic of the command. It is provided with an output handle to print outputs
+    /// and a state handle to access menu state (as passed in when the menu was created).
     fn execute(
         args: Option<&str>,
         output: &mut Output<'_, IO>,
         state: &mut S,
     ) -> impl Future<Output = ()>;
+
+    /// Returns the help string that will be printed for this command.
     fn help_string() -> &'static str;
 }
 
@@ -149,7 +170,7 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
 }
 
 impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
-    pub fn new(name: &'static str) -> Self {
+    fn new(name: &'static str) -> Self {
         Self {
             name,
             _cmd_marker: PhantomData,
@@ -159,9 +180,9 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
     }
 }
 
-pub struct NullRouter {}
+struct FinalRouter {}
 
-impl<IO: IoDevice, S> Router<IO, S> for NullRouter {
+impl<IO: IoDevice, S> Router<IO, S> for FinalRouter {
     async fn execute_or_forward(
         &self,
         _cmd: &str,
@@ -177,13 +198,13 @@ impl<IO: IoDevice, S> Router<IO, S> for NullRouter {
     }
 }
 
-struct RouterImpl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> {
+struct NormalRouter<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> {
     cmd: CommandHolder<IO, S, CMD>,
     next_router: NextRouter,
 }
 
 impl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> Router<IO, S>
-    for RouterImpl<IO, S, NextRouter, CMD>
+    for NormalRouter<IO, S, NextRouter, CMD>
 {
     async fn execute_or_forward(
         &self,
@@ -207,18 +228,32 @@ impl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> Router<IO,
     }
 }
 
+/// You probably don't want to implement this trait yourself! This trait is used to make
+/// the internal structure of the Menu opaque to the user which is useful for implementing
+/// the builder pattern in the way it has been done here.
+///
+/// What this means is that when you build a Menu, all you know is that you will end up with
+/// "something" that has the interface specified by this trait.
 pub trait Menu<IO: IoDevice, S> {
-    fn add_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S>;
+    /// Registers a new command with the Menu.
+    fn with_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S>;
+
+    /// Tries to run the Menu and returns false once that is no longer possible.
+    /// Most likely due to a disconnect.
     fn can_run(&mut self) -> impl Future<Output = bool>;
+
+    /// Borrows the internal Menu state.
     fn borrow_state(&self) -> &S;
+
+    /// Borrows the internal Menu state mutably.
     fn borrow_state_mut(&mut self) -> &mut S;
 }
 
 impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> Menu<IO, S> for MenuImpl<'_, IO, S, HeadRouter> {
-    fn add_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S> {
+    fn with_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S> {
         assert_ne!(name, "help");
 
-        let new_router = RouterImpl {
+        let new_router = NormalRouter {
             cmd: CommandHolder::<IO, S, CMD>::new(name),
             next_router: self.head_router,
         };
@@ -370,14 +405,15 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
     }
 }
 
-pub fn new_menu<'d, IO: IoDevice, S>(
+/// Returns an empty `Menu` that can be extended/customised using the relevant trait functions.
+pub fn make_menu<'d, IO: IoDevice, S>(
     io_device: &'d mut IO,
     input_buffer: &'d mut [u8],
     output_buffer: &'d mut [u8],
     state: S,
 ) -> impl Menu<IO, S> + use<'d, IO, S> {
     MenuImpl {
-        head_router: NullRouter {},
+        head_router: FinalRouter {},
         input_buffer,
         input_buffer_idx: 0,
         output_buffer,
@@ -387,6 +423,9 @@ pub fn new_menu<'d, IO: IoDevice, S>(
     }
 }
 
+/// Runs the specified `Menu` until it is no longer possible (most likely due to a disconnect).
+///
+/// The `Menu` is then returned back so that it can be re-used or to access its state.
 pub async fn run_menu<IO: IoDevice, S>(mut menu: impl Menu<IO, S>) -> impl Menu<IO, S> {
     while menu.can_run().await {}
     menu
