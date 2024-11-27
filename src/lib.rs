@@ -175,7 +175,7 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
     }
 
     async fn print_help(&self, output: &mut Output<'_, IO>) -> Result<(), MenuError> {
-        outwriteln!(output, "{}: {}", self.name, CMD::help_string())
+        outwriteln!(output, "\t{}: {}", self.name, CMD::help_string())
     }
 }
 
@@ -396,6 +396,7 @@ impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRou
                 defmt::trace!("Picomenu processing line: {:?}", line);
 
                 if cmd == "help" {
+                    outwriteln!(output, "AVAILABLE COMMANDS:")?;
                     self.head_router.print_help(output).await?;
                 } else {
                     let res = self

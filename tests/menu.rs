@@ -135,10 +135,11 @@ async fn prints_help() {
     );
     menu.run().await.unwrap();
 
-    assert_eq!(device.read(), "hello: Says hello\n");
-    assert_eq!(device.read(), "overflow: Crashes\n");
-    assert_eq!(device.read(), "version: Shows version\n");
-    assert_eq!(device.read(), "test: Tests stuff\n");
+    assert_eq!(device.read(), "AVAILABLE COMMANDS:\n");
+    assert_eq!(device.read(), "\thello: Says hello\n");
+    assert_eq!(device.read(), "\toverflow: Crashes\n");
+    assert_eq!(device.read(), "\tversion: Shows version\n");
+    assert_eq!(device.read(), "\ttest: Tests stuff\n");
 }
 
 #[tokio::test]
