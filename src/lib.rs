@@ -139,6 +139,9 @@ trait Router<IO: IoDevice, S> {
 /// Commands for a menu are specified by providing structs that implement the Command trait.
 /// This allows the menu to understand how to implement the command.
 pub trait Command<IO: IoDevice, S> {
+    /// Returns the name of this command i.e. what needs to be entered to run it.
+    fn name() -> &'static str;
+
     /// Executes the logic of the command. It is provided with an output handle to print outputs
     /// and a state handle to access menu state (as passed in when the menu was created).
     fn execute(
@@ -246,14 +249,16 @@ impl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> Router<IO,
 /// "something" that has the interface specified by this trait.
 pub trait Menu<IO: IoDevice, S> {
     /// Registers a new command with the Menu.
-    fn with_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S>;
+    fn with_command<CMD: Command<IO, S>>(self) -> impl Menu<IO, S>;
 
     /// Runs the Menu until it encounters an unrecoverable error or its `IODevice` disconnects.
     fn run(self) -> impl Future<Output = Result<(), MenuError>>;
 }
 
 impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> Menu<IO, S> for MenuImpl<'_, IO, S, HeadRouter> {
-    fn with_command<CMD: Command<IO, S>>(self, name: &'static str) -> impl Menu<IO, S> {
+    fn with_command<CMD: Command<IO, S>>(self) -> impl Menu<IO, S> {
+        let name = CMD::name();
+
         // TODO: return errors for invalid commands instead of pannicing
         assert_ne!(name, "help");
         assert!(name.find([' ']).is_none());

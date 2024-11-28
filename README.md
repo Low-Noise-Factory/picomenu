@@ -9,6 +9,14 @@ Following is an an example of how to use the library:
 ```
 struct VersionCommand {}
 impl<IO: IoDevice> Command<IO, State> for VersionCommand {
+    fn name() -> &'static str {
+        "version"
+    }
+
+    fn help_string() -> &'static str {
+        "Shows version"
+    }
+
     async fn execute(
         _args: Option<&str>,
         output: &mut Output<'_, IO>,
@@ -16,14 +24,18 @@ impl<IO: IoDevice> Command<IO, State> for VersionCommand {
     ) -> Result<(), MenuError> {
         outwriteln!(output, "Version: {}", state.version)
     }
-
-    fn help_string() -> &'static str {
-        "Shows version"
-    }
 }
 
 struct HelloCommand {}
 impl<IO: IoDevice> Command<IO, State> for HelloCommand {
+    fn name() -> &'static str {
+        "hello"
+    }
+
+    fn help_string() -> &'static str {
+        "Says hello"
+    }
+
     async fn execute(
         args: Option<&str>,
         output: &mut Output<'_, IO>,
@@ -34,10 +46,6 @@ impl<IO: IoDevice> Command<IO, State> for HelloCommand {
         } else {
             outwriteln!(output, "Please enter your name")
         }
-    }
-
-    fn help_string() -> &'static str {
-        "Says hello"
     }
 }
 
@@ -52,8 +60,8 @@ fn build_menu<'d>(
     output_buffer: &'d mut [u8],
 ) -> impl Menu<MockIo, State> + use<'d> {
     make_menu(device, state, input_buffer, output_buffer)
-        .with_command::<VersionCommand>("version")
-        .with_command::<HelloCommand>("hello")
+        .with_command::<VersionCommand>()
+        .with_command::<HelloCommand>()
 }
 ```
 
