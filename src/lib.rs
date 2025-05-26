@@ -5,9 +5,6 @@ use core::marker::PhantomData;
 use core::str::{self, Utf8Error};
 use ufmt::uWrite;
 
-// Re-export so consumers do not need to depend on `ufmt` directly.
-pub use ufmt::uwriteln;
-
 /// These are errors that an `IoDevice` may throw when it is requested to
 /// perform an operation.
 #[derive(Debug, defmt::Format, PartialEq)]
@@ -120,7 +117,7 @@ impl<IO: IoDevice> uWrite for Output<'_, IO> {
 #[macro_export]
 macro_rules! outwriteln {
     ($out:expr, $($tt:tt)*) => {{
-        match uwriteln!($out, $($tt)*) {
+        match ufmt::uwriteln!($out, $($tt)*) {
             Ok(_) => $out.flush_buffer().await.map_err(|e| MenuError::Io(e)),
             e => e,
         }
