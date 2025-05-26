@@ -1,11 +1,10 @@
 [package]
 name = "picomenu"
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 
 [[test]]
 name = "menu"
-src = "menu.rs"
 
 [dependencies]
 defmt = "1.0"

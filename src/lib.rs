@@ -350,7 +350,7 @@ async fn try_print_error<IO: IoDevice>(
     }
 }
 
-impl<'d, IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'d, IO, S, HeadRouter> {
+impl<IO: IoDevice, S, HeadRouter: Router<IO, S>> MenuImpl<'_, IO, S, HeadRouter> {
     async fn read_input(&mut self) -> Result<(), MenuError> {
         let read_result = {
             if self.input_buffer_idx < self.input_buffer.len() {
