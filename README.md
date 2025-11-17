@@ -1,6 +1,6 @@
 # Picomenu
 
-[![Build and Test](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml)
+[![Build and Test](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml) [![Publish](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/publish.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/publish.yml) ![Crates.io Version](https://img.shields.io/crates/v/picomenu) ![Crates.io License](https://img.shields.io/crates/l/picomenu)
 
 Picomenu is a very simple library to implement command line menus on no-std + async embedded systems such as those powered by [Embassy](https://embassy.dev/). It is only meant for very simple menus and therefore does not support more advanced features at the moment.
 
@@ -69,4 +69,4 @@ Here is should be noted that the help command is also provided automatically!
 
 To get things working in your system, you will also need to implement the `IoDevice` trait for the struct that is responsible for input to and output from the menu. For more details on this and other aspects of how to use the library, please have a look at `tests/menu.rs`. Finally, you will need to add `ufmt` as a dependency to project as it was unfortunately not possible to avoid having it as a peer dependency.
 
-The current feature set is sufficient for our needs. Therefore, we will unfortunately not have time to address any feature requests :) But please feel free to contribute any features you may need yourself ;)
+The current feature set is sufficient for our needs. Therefore, we will unfortunately not have time to address feature requests. But please feel free to contribute any features you may need yourself!
