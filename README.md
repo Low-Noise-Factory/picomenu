@@ -1,6 +1,6 @@
 # Picomenu
 
-[![Build and Test](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml) [![Publish](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/publish.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/publish.yml) ![Crates.io Version](https://img.shields.io/crates/v/picomenu) ![Crates.io License](https://img.shields.io/crates/l/picomenu)
+[![Build and Test](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/build_and_test.yml) [![Publish](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/publish.yml/badge.svg)](https://github.com/Low-Noise-Factory/picomenu/actions/workflows/publish.yml)
 
 Picomenu is a very simple library to implement command line menus on no-std + async embedded systems such as those powered by [Embassy](https://embassy.dev/). It is only meant for very simple menus and therefore does not support more advanced features at the moment.
 
