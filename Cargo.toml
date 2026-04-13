@@ -17,4 +17,4 @@ defmt = "1.0"
 ufmt = "0.2"
 
 [dev-dependencies]
-tokio = { version = "1.50", features = ["rt", "macros"] }
+tokio = { version = "1.51", features = ["rt", "macros"] }
