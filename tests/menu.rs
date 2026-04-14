@@ -133,6 +133,32 @@ impl<IO: IoDevice> Command<IO, State> for HelloCommand {
     }
 }
 
+const SECRET_RESPONSE: &str = "Secret command executed\n";
+
+struct HiddenCommand {}
+impl<IO: IoDevice> Command<IO, State> for HiddenCommand {
+    fn name() -> &'static str {
+        "secret"
+    }
+
+    fn help_string() -> &'static str {
+        "A hidden command"
+    }
+
+    fn hidden() -> bool {
+        true
+    }
+
+    async fn execute(
+        _args: Option<&str>,
+        output: &mut Output<'_, IO>,
+        _state: &mut State,
+    ) -> Result<(), MenuError> {
+        output.write(SECRET_RESPONSE).await?;
+        Ok(())
+    }
+}
+
 #[derive(Default)]
 struct State {
     version: u32,
@@ -150,10 +176,11 @@ fn build_menu<'d>(
         .with_command::<VersionCommand>()
         .with_command::<OverflowCommand>()
         .with_command::<HelloCommand>()
+        .with_command::<HiddenCommand>()
 }
 
 #[tokio::test]
-async fn prints_help() {
+async fn prints_normal_help() {
     let mut device = MockIo::new();
     device.queue_to_send("help\n");
 
@@ -174,6 +201,30 @@ async fn prints_help() {
     assert_eq!(device.read(), "> overflow: Crashes\n");
     assert_eq!(device.read(), "> version: Shows version\n");
     assert_eq!(device.read(), "> test: Tests stuff\n");
+
+    // Hidden command should NOT appear
+    assert!(device.received.iter().all(|s| !s.contains("secret")));
+}
+
+#[tokio::test]
+async fn prints_hidden_help() {
+    let mut device = MockIo::new();
+    device.queue_to_send("help --hidden\n");
+
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
+
+    // Hidden command should appear
+    assert!(device.received.iter().any(|s| s.contains("secret")));
 }
 
 #[tokio::test]
@@ -398,4 +449,23 @@ async fn handles_command_arguments() {
     menu.run().await.unwrap();
 
     assert_eq!(device.read(), "Hello Testing Person!\n");
+}
+
+#[tokio::test]
+async fn hidden_command_can_be_executed() {
+    let mut device = MockIo::new();
+    device.queue_to_send("secret\n");
+
+    let mut input_buffer = [0; 128];
+    let mut output_buffer = [0; 128];
+    let mut state = State::default();
+    let menu = build_menu(
+        &mut device,
+        &mut state,
+        &mut input_buffer,
+        &mut output_buffer,
+    );
+    menu.run().await.unwrap();
+
+    assert_eq!(device.read(), SECRET_RESPONSE);
 }
