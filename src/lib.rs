@@ -133,7 +133,8 @@ trait Router<IO: IoDevice, S> {
         state: &mut S,
     ) -> Result<(), MenuError>;
 
-    async fn print_help(&self, output: &mut Output<IO>, show_hidden: bool) -> Result<(), MenuError>;
+    async fn print_help(&self, output: &mut Output<IO>, show_hidden: bool)
+    -> Result<(), MenuError>;
 }
 
 /// Commands for a menu are specified by providing structs that implement the Command trait.
@@ -182,7 +183,11 @@ impl<IO: IoDevice, S, CMD: Command<IO, S>> CommandHolder<IO, S, CMD> {
         }
     }
 
-    async fn print_help(&self, output: &mut Output<'_, IO>, show_hidden: bool) -> Result<(), MenuError> {
+    async fn print_help(
+        &self,
+        output: &mut Output<'_, IO>,
+        show_hidden: bool,
+    ) -> Result<(), MenuError> {
         if show_hidden || !CMD::hidden() {
             outwriteln!(output, "> {}: {}", CMD::name(), CMD::help_string())
         } else {
@@ -214,7 +219,11 @@ impl<IO: IoDevice, S> Router<IO, S> for FinalRouter {
         Err(MenuError::UnknownCommand)
     }
 
-    async fn print_help(&self, _output: &mut Output<'_, IO>, _show_hidden: bool) -> Result<(), MenuError> {
+    async fn print_help(
+        &self,
+        _output: &mut Output<'_, IO>,
+        _show_hidden: bool,
+    ) -> Result<(), MenuError> {
         Ok(())
     }
 }
@@ -243,7 +252,11 @@ impl<IO: IoDevice, S, NextRouter: Router<IO, S>, CMD: Command<IO, S>> Router<IO,
         }
     }
 
-    async fn print_help(&self, output: &mut Output<'_, IO>, show_hidden: bool) -> Result<(), MenuError> {
+    async fn print_help(
+        &self,
+        output: &mut Output<'_, IO>,
+        show_hidden: bool,
+    ) -> Result<(), MenuError> {
         self.cmd.print_help(output, show_hidden).await?;
         self.next_router.print_help(output, show_hidden).await
     }
