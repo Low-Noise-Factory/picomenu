@@ -13,7 +13,7 @@ categories = ["command-line-interface", "asynchronous", "embedded", "no-std", "n
 name = "menu"
 
 [dependencies]
-defmt = "1.0"
+defmt = "1.1"
 ufmt = "0.2"
 
 [dev-dependencies]
